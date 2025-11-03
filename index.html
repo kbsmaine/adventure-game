@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="char-screen" class="screen active">
+  <div id="char-screen" class="screen">
     <h1>🗺️ Mini Adventure</h1>
     <p>Create your hero.</p>
     <label>
@@ -16,19 +16,19 @@
     </label>
 
     <label>
-      Outfit color:
-      <input id="hero-color" type="color" value="#4f46e5" />
-    </label>
-
-    <label>
       Class:
       <select id="hero-class">
         <option value="adventurer">Adventurer</option>
-        <option value="knight">Knight</option>
-        <option value="ranger">Ranger</option>
-        <option value="mage">Mage</option>
+        <option value="scavenger">Scavenger</option>
+        <option value="soldier">Soldier</option>
+        <option value="medic">Medic</option>
       </select>
     </label>
+
+    <p style="margin-top:0.5rem;">Pick a survivor:</p>
+    <div id="character-grid" class="character-grid">
+      <!-- cards injected by JS -->
+    </div>
 
     <button id="start-btn">Start Adventure</button>
   </div>
