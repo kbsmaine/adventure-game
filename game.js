@@ -1,6 +1,7 @@
 // game.js
-// Auto collisions + manual obstacles + collision editor (B) + coord mode (C)
+// auto collision + your drawn collisions + editor
 
+// DOM refs
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
 const startBtn = document.getElementById("start-btn");
@@ -19,13 +20,24 @@ const interactBox = document.getElementById("interact-box");
 const deathScreen = document.getElementById("death-screen");
 const retryBtn = document.getElementById("retry-btn");
 
+// debug toggles
 let DEBUG_COLLISIONS = true; // L
 let coordMode = false;       // C
 let EDIT_COLLISIONS = false; // B
 
+// editor vars
+let lastMousePos = null;
+let paintedColliders = [];
+let dragStart = null;
+
+// collisions
+let collisionRects = [];
+
+// map
 const bgImage = new Image();
 bgImage.src = "map.png";
 
+// game state
 let hero = null;
 let selectedCharId = null;
 let level = 1;
@@ -35,10 +47,7 @@ let door = null;
 let gameOver = false;
 let pendingPickup = null;
 
-let collisionRects = [];     // auto + manual
-let paintedColliders = [];   // drawn in editor mode
-let dragStart = null;        // for editor drag
-
+// character presets
 const survivorPresets = [
   { id: "operator", name: "Zone Operator", role: "Armored", body: "#1f2937", jacket: "#f97316", pants: "#0f172a", skin: "#fef3c7", gear: "helmet", class: "operator" },
   { id: "scout", name: "Tunnel Scout", role: "Light", body: "#0f172a", jacket: "#38bdf8", pants: "#020617", skin: "#fee2e2", gear: "hood", class: "scout" },
@@ -46,11 +55,13 @@ const survivorPresets = [
   { id: "ranger", name: "Perimeter Ranger", role: "Marksman", body: "#1f2937", jacket: "#eab308", pants: "#0f172a", skin: "#fef3c7", gear: "goggles", class: "ranger" }
 ];
 
+// weapons
 const weapons = {
   flashlight: { name: "Flashlight", canFire: false },
   pistol: { name: "9mm Pistol", canFire: true, fireRate: 280, bulletSpeed: 7, damage: 1, spread: 0 }
 };
 
+// key state
 const keys = {
   w: false, a: false, s: false, d: false,
   ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
@@ -71,15 +82,16 @@ coordOverlay.style.borderRadius = "6px";
 coordOverlay.style.pointerEvents = "none";
 coordOverlay.style.zIndex = "999";
 coordOverlay.style.display = "none";
-coordOverlay.textContent = "coord mode";
 document.body.appendChild(coordOverlay);
 
-// ------------- init / resize -------------
+// ================== init / resize ==================
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   placeDoor();
-  if (bgImage.complete) buildCollisionMapFromImage(bgImage);
+  if (bgImage.complete) {
+    buildCollisionMapFromImage(bgImage);
+  }
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
@@ -88,10 +100,10 @@ bgImage.onload = () => {
   buildCollisionMapFromImage(bgImage);
 };
 
-// show char screen
+// show char screen on load
 charScreen.classList.add("active");
 
-// ------------- character select -------------
+// ================== character screen ==================
 function renderCharacterGrid() {
   charGrid.innerHTML = "";
   survivorPresets.forEach((p, i) => {
@@ -126,7 +138,7 @@ function renderCharacterGrid() {
 }
 renderCharacterGrid();
 
-// ------------- start game -------------
+// ================== start game ==================
 startBtn.addEventListener("click", () => {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
@@ -149,8 +161,8 @@ startBtn.addEventListener("click", () => {
     hp: 100,
     maxHp: 100
   };
-  level = 1;
 
+  level = 1;
   hudName.textContent = hero.name;
   hudClass.textContent = hero.class;
   hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
@@ -172,7 +184,7 @@ retryBtn.addEventListener("click", () => {
   requestAnimationFrame(gameLoop);
 });
 
-// ------------- input -------------
+// ================== input ==================
 window.addEventListener("keydown", e => {
   if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
   if (e.key === "e" || e.key === "E") tryInteract();
@@ -183,8 +195,13 @@ window.addEventListener("keydown", e => {
     console.log(coordMode ? "📍 coord mode ON" : "coord mode OFF");
   }
   if (e.key === "b" || e.key === "B") {
-    EDIT_COLLISIONS = !EDIT_COLLISIONS;
-    console.log(EDIT_COLLISIONS ? "🧱 collision editor ON (drag on canvas)" : "collision editor OFF");
+    if (e.shiftKey) {
+      paintedColliders = [];
+      console.log("🧹 cleared painted colliders");
+    } else {
+      EDIT_COLLISIONS = !EDIT_COLLISIONS;
+      console.log(EDIT_COLLISIONS ? "🧱 collision editor ON (drag on canvas)" : "collision editor OFF");
+    }
   }
 });
 
@@ -193,7 +210,6 @@ window.addEventListener("keyup", e => {
 });
 
 canvas.addEventListener("mousedown", e => {
-  // editor drag
   if (EDIT_COLLISIONS) {
     const rect = canvas.getBoundingClientRect();
     dragStart = {
@@ -216,10 +232,8 @@ canvas.addEventListener("mouseup", e => {
     const h = Math.abs(y2 - dragStart.y);
     dragStart = null;
 
-    // add to temporary colliders so it blocks right away
     paintedColliders.push({ x, y, w, h });
 
-    // print code for you to paste in buildCollisionMapFromImage
     console.log(`collisionRects.push({ x: ${Math.round(x)}, y: ${Math.round(y)}, w: ${Math.round(w)}, h: ${Math.round(h)} });`);
   } else {
     keys.mouseDown = false;
@@ -227,11 +241,14 @@ canvas.addEventListener("mouseup", e => {
 });
 
 canvas.addEventListener("mousemove", e => {
-  if (!hero) return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
-  hero.angle = Math.atan2(my - hero.y, mx - hero.x);
+  lastMousePos = { x: mx, y: my };
+
+  if (hero) {
+    hero.angle = Math.atan2(my - hero.y, mx - hero.x);
+  }
 
   if (coordMode) {
     const rx = (mx / canvas.width).toFixed(2);
@@ -240,7 +257,14 @@ canvas.addEventListener("mousemove", e => {
   }
 });
 
-// ------------- collision from image + manual -------------
+// block right-click menu while editing
+canvas.addEventListener("contextmenu", e => {
+  if (EDIT_COLLISIONS) {
+    e.preventDefault();
+  }
+});
+
+// ================== collisions from image + your boxes ==================
 function buildCollisionMapFromImage(img) {
   const off = document.createElement("canvas");
   off.width = img.width;
@@ -254,6 +278,7 @@ function buildCollisionMapFromImage(img) {
   const scaleY = canvas.height / img.height;
   const rects = [];
 
+  // auto detect
   for (let y = 0; y < img.height; y += step) {
     for (let x = 0; x < img.width; x += step) {
       const idx = (y * img.width + x) * 4;
@@ -262,7 +287,6 @@ function buildCollisionMapFromImage(img) {
       const b = data[idx + 2];
       const a = data[idx + 3];
       if (a < 10) continue;
-
       const brightness = (r + g + b) / 3;
       const isWalkable = brightness > 90 && brightness < 190;
       if (!isWalkable) {
@@ -276,7 +300,7 @@ function buildCollisionMapFromImage(img) {
     }
   }
 
-  // bottom open zone
+  // bottom center open zone
   const openW = canvas.width * 0.22;
   const openH = canvas.height * 0.25;
   const openX = canvas.width / 2 - openW / 2;
@@ -291,25 +315,152 @@ function buildCollisionMapFromImage(img) {
     return !inOpen;
   });
 
-  // sample manual stuff (you can move/remove these)
-  compiled.push({ x: canvas.width * 0.12, y: canvas.height * 0.22, w: 55, h: 55 });
-  compiled.push({ x: canvas.width * 0.72, y: canvas.height * 0.40, w: 60, h: 50 });
-  compiled.push({ x: canvas.width * 0.38, y: canvas.height * 0.58, w: 130, h: 48 });
-  compiled.push({ x: canvas.width * 0.05, y: canvas.height * 0.30, w: canvas.width * 0.26, h: 18 });
-  compiled.push({ x: canvas.width * 0.62, y: canvas.height * 0.26, w: canvas.width * 0.30, h: 18 });
+  // NOW add all the boxes you drew (converted to compiled.push)
+  compiled.push({ x: 755, y: 431, w: 379, h: 111 });
+  compiled.push({ x: 887, y: 213, w: 38, h: 23 });
+  compiled.push({ x: 926, y: 211, w: 42, h: 13 });
+  compiled.push({ x: 931, y: 222, w: 24, h: 21 });
+  compiled.push({ x: 950, y: 225, w: 16, h: 17 });
+  compiled.push({ x: 887, y: 224, w: 49, h: 51 });
+  compiled.push({ x: 932, y: 243, w: 25, h: 25 });
+  compiled.push({ x: 907, y: 263, w: 3, h: 26 });
+  compiled.push({ x: 911, y: 267, w: 29, h: 13 });
+  compiled.push({ x: 938, y: 259, w: 25, h: 21 });
+  compiled.push({ x: 911, y: 277, w: 16, h: 11 });
+  compiled.push({ x: 923, y: 271, w: 28, h: 16 });
+  compiled.push({ x: 958, y: 223, w: 62, h: 54 });
+  compiled.push({ x: 1100, y: 224, w: 45, h: 55 });
+  compiled.push({ x: 653, y: 127, w: 55, h: 52 });
+  compiled.push({ x: 642, y: 158, w: 40, h: 33 });
+  compiled.push({ x: 633, y: 171, w: 21, h: 36 });
+  compiled.push({ x: 674, y: 181, w: 19, h: 26 });
+  compiled.push({ x: 645, y: 186, w: 34, h: 25 });
+  compiled.push({ x: 615, y: 175, w: 25, h: 28 });
+  compiled.push({ x: 678, y: 169, w: 20, h: 18 });
+  compiled.push({ x: 704, y: 139, w: 23, h: 18 });
+  compiled.push({ x: 701, y: 151, w: 21, h: 22 });
+  compiled.push({ x: 642, y: 148, w: 17, h: 14 });
+  compiled.push({ x: 1668, y: 193, w: 10, h: 54 });
+  compiled.push({ x: 1597, y: 245, w: 83, h: 6 });
+  compiled.push({ x: 1598, y: 248, w: 25, h: 100 });
+  compiled.push({ x: 1622, y: 343, w: 237, h: 5 });
+  compiled.push({ x: 1794, y: 257, w: 10, h: 54 });
+  compiled.push({ x: 1689, y: 206, w: 49, h: 38 });
+  compiled.push({ x: 1682, y: 241, w: 122, h: 14 });
+  compiled.push({ x: 1852, y: 34, w: 22, h: 306 });
+  compiled.push({ x: 1765, y: 150, w: 33, h: 5 });
+  compiled.push({ x: 1784, y: 78, w: 11, h: 72 });
+  compiled.push({ x: 1679, y: 73, w: 112, h: 7 });
+  compiled.push({ x: 1678, y: 73, w: 4, h: 78 });
+  compiled.push({ x: 1667, y: 116, w: 14, h: 37 });
+  compiled.push({ x: 1678, y: 148, w: 29, h: 6 });
+  compiled.push({ x: 1546, y: 100, w: 132, h: 15 });
+  compiled.push({ x: 1524, y: 24, w: 23, h: 89 });
+  compiled.push({ x: 1544, y: 18, w: 325, h: 17 });
+  compiled.push({ x: 1671, y: 263, w: 111, h: 35 });
+  compiled.push({ x: 828, y: 109, w: 121, h: 21 });
+  compiled.push({ x: 941, y: 122, w: 87, h: 19 });
+  compiled.push({ x: 1024, y: 123, w: 72, h: 20 });
+  compiled.push({ x: 1094, y: 131, w: 51, h: 23 });
+  compiled.push({ x: 1150, y: 144, w: 44, h: 20 });
+  compiled.push({ x: 1191, y: 148, w: 52, h: 19 });
+  compiled.push({ x: 1244, y: 155, w: 46, h: 23 });
+  compiled.push({ x: 1276, y: 162, w: 45, h: 20 });
+  compiled.push({ x: 1318, y: 167, w: 29, h: 17 });
+  compiled.push({ x: 1340, y: 173, w: 23, h: 23 });
+  compiled.push({ x: 1357, y: 182, w: 11, h: 39 });
+  compiled.push({ x: 1358, y: 194, w: 13, h: 50 });
+  compiled.push({ x: 1364, y: 212, w: 12, h: 51 });
+  compiled.push({ x: 1371, y: 245, w: 15, h: 21 });
+  compiled.push({ x: 1369, y: 259, w: 20, h: 17 });
+  compiled.push({ x: 1372, y: 258, w: 4, h: 33 });
+  compiled.push({ x: 1362, y: 269, w: 16, h: 29 });
+  compiled.push({ x: 1356, y: 285, w: 12, h: 26 });
+  compiled.push({ x: 1350, y: 299, w: 15, h: 25 });
+  compiled.push({ x: 1348, y: 310, w: 11, h: 38 });
+  compiled.push({ x: 1337, y: 318, w: 14, h: 29 });
+  compiled.push({ x: 1329, y: 336, w: 11, h: 23 });
+  compiled.push({ x: 1246, y: 386, w: 22, h: 19 });
+  compiled.push({ x: 1263, y: 379, w: 24, h: 20 });
+  compiled.push({ x: 1276, y: 373, w: 24, h: 6 });
+  compiled.push({ x: 1292, y: 360, w: 17, h: 25 });
+  compiled.push({ x: 1300, y: 354, w: 28, h: 23 });
+  compiled.push({ x: 1316, y: 349, w: 19, h: 12 });
+  compiled.push({ x: 937, y: 381, w: 154, h: 16 });
+  compiled.push({ x: 1095, y: 386, w: 166, h: 15 });
+  compiled.push({ x: 887, y: 380, w: 62, h: 13 });
+  compiled.push({ x: 857, y: 342, w: 45, h: 39 });
+  compiled.push({ x: 902, y: 349, w: 41, h: 26 });
+  compiled.push({ x: 777, y: 355, w: 124, h: 34 });
+  compiled.push({ x: 609, y: 347, w: 171, h: 28 });
+  compiled.push({ x: 590, y: 359, w: 25, h: 13 });
+  compiled.push({ x: 570, y: 402, w: 14, h: 38 });
+  compiled.push({ x: 423, y: 433, w: 156, h: 15 });
+  compiled.push({ x: 223, y: 435, w: 219, h: 9 });
+  compiled.push({ x: 249, y: 442, w: 94, h: 74 });
+  compiled.push({ x: 433, y: 535, w: 119, h: 14 });
+  compiled.push({ x: 83, y: 433, w: 133, h: 66 });
+  compiled.push({ x: 315, y: 335, w: 34, h: 24 });
+  compiled.push({ x: 239, y: 292, w: 68, h: 54 });
+  compiled.push({ x: 295, y: 304, w: 73, h: 65 });
+  compiled.push({ x: 214, y: 319, w: 66, h: 48 });
+  compiled.push({ x: 213, y: 286, w: 56, h: 42 });
+  compiled.push({ x: 337, y: 330, w: 57, h: 48 });
+  compiled.push({ x: 141, y: 178, w: 142, h: 14 });
+  compiled.push({ x: 323, y: 176, w: 139, h: 11 });
+  compiled.push({ x: 443, y: 70, w: 17, h: 113 });
+  compiled.push({ x: 142, y: 67, w: 317, h: 14 });
+  compiled.push({ x: 140, y: 73, w: 29, h: 105 });
+  compiled.push({ x: 178, y: 97, w: 61, h: 20 });
+  compiled.push({ x: 170, y: 138, w: 49, h: 40 });
+  compiled.push({ x: 363, y: 157, w: 75, h: 9 });
+  compiled.push({ x: 618, y: 573, w: 81, h: 36 });
+  compiled.push({ x: 699, y: 565, w: 28, h: 76 });
+  compiled.push({ x: 702, y: 674, w: 27, h: 100 });
+  compiled.push({ x: 211, y: 752, w: 496, h: 17 });
+  compiled.push({ x: 210, y: 563, w: 12, h: 193 });
+  compiled.push({ x: 222, y: 563, w: 495, h: 4 });
+  compiled.push({ x: 458, y: 570, w: 92, h: 36 });
+  compiled.push({ x: 456, y: 606, w: 98, h: 14 });
+  compiled.push({ x: 455, y: 701, w: 237, h: 47 });
+  compiled.push({ x: 340, y: 655, w: 63, h: 14 });
+  compiled.push({ x: 718, y: 861, w: 229, h: 23 });
+  compiled.push({ x: 58, y: 864, w: 661, h: 16 });
+  compiled.push({ x: 54, y: 366, w: 39, h: 500 });
+  compiled.push({ x: 49, y: 44, w: 28, h: 328 });
+  compiled.push({ x: 288, y: 19, w: 614, h: 11 });
+  compiled.push({ x: 905, y: 20, w: 620, h: 19 });
+  compiled.push({ x: 665, y: 25, w: 10, h: 7 });
+  compiled.push({ x: 666, y: 33, w: 15, h: 24 });
+  compiled.push({ x: 666, y: 87, w: 17, h: 30 });
+  compiled.push({ x: 685, y: 107, w: 88, h: 10 });
+  compiled.push({ x: 760, y: 102, w: 77, h: 19 });
+  compiled.push({ x: 689, y: 37, w: 289, h: 30 });
+  compiled.push({ x: 972, y: 43, w: 547, h: 21 });
+  compiled.push({ x: 1401, y: 594, w: 60, h: 143 });
+  compiled.push({ x: 1504, y: 600, w: 43, h: 135 });
+  compiled.push({ x: 1590, y: 599, w: 35, h: 134 });
+  compiled.push({ x: 1669, y: 599, w: 39, h: 137 });
+  compiled.push({ x: 1757, y: 689, w: 37, h: 44 });
+  compiled.push({ x: 1758, y: 508, w: 51, h: 55 });
+  compiled.push({ x: 1674, y: 503, w: 41, h: 48 });
+  compiled.push({ x: 1582, y: 502, w: 47, h: 52 });
+  compiled.push({ x: 1413, y: 494, w: 15, h: 53 });
+  compiled.push({ x: 1417, y: 494, w: 41, h: 57 });
+  compiled.push({ x: 1495, y: 502, w: 45, h: 46 });
+  compiled.push({ x: 1795, y: 378, w: 54, h: 52 });
+  compiled.push({ x: 1307, y: 780, w: 128, h: 78 });
+  compiled.push({ x: 1429, y: 841, w: 455, h: 47 });
+  compiled.push({ x: 1850, y: 604, w: 30, h: 236 });
+  compiled.push({ x: 1847, y: 337, w: 23, h: 266 });
+  compiled.push({ x: 873, y: 693, w: 152, h: 36 });
+  compiled.push({ x: 881, y: 725, w: 140, h: 33 });
 
-  // doorway
-  const doorHole = {
-    x: canvas.width * 0.47,
-    y: canvas.height * 0.50,
-    w: canvas.width * 0.08,
-    h: canvas.height * 0.05
-  };
-  compiled = compiled.filter(r => !rectsOverlap(r, doorHole));
-
+  // done
   collisionRects = compiled;
 }
 
+// ================== helper ==================
 function rectsOverlap(a, b) {
   return (
     a.x < b.x + b.w &&
@@ -319,7 +470,7 @@ function rectsOverlap(a, b) {
   );
 }
 
-// ------------- game logic -------------
+// ================== game logic ==================
 function placeDoor() {
   door = { x: canvas.width / 2 - 40, y: canvas.height - 120, active: false };
 }
@@ -364,6 +515,7 @@ function update(t) {
 
   if (keys.mouseDown) tryFire(t);
 
+  // bullets
   bullets = bullets.filter(b => {
     b.x += Math.cos(b.angle) * b.speed;
     b.y += Math.sin(b.angle) * b.speed;
@@ -371,6 +523,7 @@ function update(t) {
     return b.life > 0;
   });
 
+  // bullet -> zombie
   bullets.forEach(b => {
     zombies.forEach(z => {
       if (!z.dying) {
@@ -384,6 +537,7 @@ function update(t) {
     });
   });
 
+  // zombie move + damage
   zombies.forEach(z => {
     if (z.dying) {
       z.dieTimer--;
@@ -410,11 +564,8 @@ function update(t) {
 
   const nearPickup = pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40;
   const nearDoor = door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50;
-  if (nearPickup || nearDoor) {
-    interactBox.classList.remove("hidden");
-  } else {
-    interactBox.classList.add("hidden");
-  }
+  if (nearPickup || nearDoor) interactBox.classList.remove("hidden");
+  else interactBox.classList.add("hidden");
 
   hudHp.textContent = "HP: " + Math.ceil(hero.hp);
 }
@@ -428,7 +579,6 @@ function isBlockedPoint(px, py) {
 
 function moveHeroWithCollisions(dx, dy) {
   const half = 14;
-
   const newX = hero.x + dx;
   const xBlocked =
     isBlockedPoint(newX - half, hero.y) ||
@@ -480,7 +630,7 @@ function tryInteract() {
   }
 }
 
-// ------------- drawing -------------
+// ================== drawing ==================
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -521,9 +671,14 @@ function drawPaintedColliders() {
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeRect(r.x, r.y, r.w, r.h);
   });
-  // live drag preview
-  if (dragStart) {
-    const mx = hero.x; // not needed, leave blank
+  // preview while dragging
+  if (dragStart && lastMousePos) {
+    const x = Math.min(dragStart.x, lastMousePos.x);
+    const y = Math.min(dragStart.y, lastMousePos.y);
+    const w = Math.abs(lastMousePos.x - dragStart.x);
+    const h = Math.abs(lastMousePos.y - dragStart.y);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
   }
   ctx.restore();
 }
