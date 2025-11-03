@@ -3,6 +3,7 @@
   --panel: rgba(15, 23, 42, 0.7);
   --text: #e2e8f0;
   --accent: #38bdf8;
+  --muted: #94a3b8;
 }
 
 * {
@@ -35,7 +36,8 @@ body {
   padding: 1.5rem;
   border: 1px solid rgba(148,163,184,0.15);
   border-radius: 1rem;
-  min-width: 280px;
+  min-width: 320px;
+  max-width: 460px;
 }
 
 #char-screen h1 {
@@ -61,11 +63,52 @@ body {
 #start-btn {
   background: var(--accent);
   border: none;
-  padding: 0.4rem 0.6rem;
+  padding: 0.45rem 0.6rem;
   border-radius: 0.5rem;
   cursor: pointer;
   color: #020617;
   font-weight: 600;
+  margin-top: 0.5rem;
+}
+
+.character-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.5rem;
+}
+
+.character-card {
+  background: rgba(15,23,42,0.5);
+  border: 1px solid rgba(148,163,184,0.12);
+  border-radius: 0.65rem;
+  padding: 0.4rem 0.5rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.character-card:hover {
+  transform: translateY(-2px);
+}
+
+.character-card.selected {
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 2px rgba(56,189,248,0.25);
+}
+
+.char-preview {
+  width: 46px;
+  height: 46px;
+  border-radius: 9999px;
+  margin-bottom: 0.25rem;
+  border: 2px solid rgba(226,232,240,0.3);
+}
+
+.char-meta {
+  font-size: 0.7rem;
+  color: var(--muted);
 }
 
 #game-screen {
