@@ -1,4 +1,5 @@
-// Quarantine Graveyard - image map + auto collisions
+// game.js
+// Quarantine Graveyard with AUTO collisions from map.png
 
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
@@ -18,7 +19,10 @@ const interactBox = document.getElementById("interact-box");
 const deathScreen = document.getElementById("death-screen");
 const retryBtn = document.getElementById("retry-btn");
 
-// load background image (PUT map.png in same folder)
+// turn this on to see the red collision boxes
+let DEBUG_COLLISIONS = true;
+
+// load the map image (must be in same folder)
 const bgImage = new Image();
 bgImage.src = "map.png";
 
@@ -30,9 +34,9 @@ let bullets = [];
 let door = null;
 let gameOver = false;
 let muzzleFlashTimer = 0;
-let pendingPickup = null; // pistol pickup
+let pendingPickup = null;
 
-// collision rectangles
+// this will be filled by scanning the image
 let collisionRects = [];
 
 const survivorPresets = [
@@ -49,27 +53,29 @@ const weapons = {
 let lastFire = 0;
 
 const keys = {
-  ArrowUp: false,
-  ArrowDown: false,
-  ArrowLeft: false,
-  ArrowRight: false,
-  w: false,
-  a: false,
-  s: false,
-  d: false,
+  w: false, a: false, s: false, d: false,
+  ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
   mouseDown: false
 };
 
+// resize + rebuild collisions when needed
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   placeDoor();
-  autoPlaceColliders();
+  if (bgImage.complete) {
+    buildCollisionMapFromImage(bgImage);
+  }
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-// build character selection
+// when the image is ready, build collisions
+bgImage.onload = () => {
+  buildCollisionMapFromImage(bgImage);
+};
+
+// character select UI
 function renderCharacterGrid() {
   charGrid.innerHTML = "";
   survivorPresets.forEach((p, idx) => {
@@ -104,7 +110,7 @@ function renderCharacterGrid() {
 }
 renderCharacterGrid();
 
-// load from localStorage
+// try load saved
 (function loadSavedHero() {
   const saved = localStorage.getItem("grave_hero_v1");
   if (saved) {
@@ -114,7 +120,7 @@ renderCharacterGrid();
       x: canvas.width / 2,
       y: canvas.height - 200,
       angle: 0,
-      speed: 2.25,
+      speed: 2.3,
       walkTime: 0,
       hp: d.hp || 100,
       maxHp: 100
@@ -128,7 +134,6 @@ renderCharacterGrid();
     charScreen.classList.remove("active");
     gameScreen.classList.add("active");
     placeDoor();
-    autoPlaceColliders();
     spawnZombies();
     requestAnimationFrame(gameLoop);
   } else {
@@ -136,10 +141,10 @@ renderCharacterGrid();
   }
 })();
 
+// start btn
 startBtn.addEventListener("click", () => {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
-
   hero = {
     name: nm,
     class: preset.class,
@@ -159,8 +164,8 @@ startBtn.addEventListener("click", () => {
     maxHp: 100
   };
   level = 1;
-
   saveHero();
+
   hudName.textContent = hero.name;
   hudClass.textContent = hero.class;
   hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
@@ -170,7 +175,6 @@ startBtn.addEventListener("click", () => {
   charScreen.classList.remove("active");
   gameScreen.classList.add("active");
   placeDoor();
-  autoPlaceColliders();
   spawnZombies();
   requestAnimationFrame(gameLoop);
 });
@@ -184,38 +188,33 @@ retryBtn.addEventListener("click", () => {
 });
 
 function saveHero() {
-  localStorage.setItem(
-    "grave_hero_v1",
-    JSON.stringify({
-      name: hero.name,
-      class: hero.class,
-      presetId: hero.presetId,
-      body: hero.body,
-      jacket: hero.jacket,
-      pants: hero.pants,
-      skin: hero.skin,
-      gear: hero.gear,
-      currentWeapon: hero.currentWeapon,
-      level: level,
-      hp: hero.hp
-    })
-  );
+  localStorage.setItem("grave_hero_v1", JSON.stringify({
+    name: hero.name,
+    class: hero.class,
+    presetId: hero.presetId,
+    body: hero.body,
+    jacket: hero.jacket,
+    pants: hero.pants,
+    skin: hero.skin,
+    gear: hero.gear,
+    currentWeapon: hero.currentWeapon,
+    level: level,
+    hp: hero.hp
+  }));
 }
 
-window.addEventListener("keydown", e => {
+// input
+window.addEventListener("keydown", (e) => {
   if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
   if (e.key === "e" || e.key === "E") tryInteract();
+  if (e.key === "l" || e.key === "L") DEBUG_COLLISIONS = !DEBUG_COLLISIONS;
 });
-window.addEventListener("keyup", e => {
+window.addEventListener("keyup", (e) => {
   if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
 });
-canvas.addEventListener("mousedown", () => {
-  keys.mouseDown = true;
-});
-canvas.addEventListener("mouseup", () => {
-  keys.mouseDown = false;
-});
-canvas.addEventListener("mousemove", e => {
+canvas.addEventListener("mousedown", () => { keys.mouseDown = true; });
+canvas.addEventListener("mouseup", () => { keys.mouseDown = false; });
+canvas.addEventListener("mousemove", (e) => {
   if (!hero) return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
@@ -223,7 +222,7 @@ canvas.addEventListener("mousemove", e => {
   hero.angle = Math.atan2(my - hero.y, mx - hero.x);
 });
 
-// place door at bottom center
+// place exit door at bottom center
 function placeDoor() {
   door = {
     x: canvas.width / 2 - 40,
@@ -232,40 +231,52 @@ function placeDoor() {
   };
 }
 
-// auto collision rectangles to match the image layout
-function autoPlaceColliders() {
-  const w = canvas.width;
-  const h = canvas.height;
-  collisionRects = [];
-
-  // outer walls
-  collisionRects.push({ x: 0, y: 0, w: w, h: 30 });
-  collisionRects.push({ x: 0, y: 0, w: 30, h: h });
-  collisionRects.push({ x: 0, y: h - 30, w: w, h: 30 });
-  collisionRects.push({ x: w - 30, y: 0, w: 30, h: h });
-
-  // top-left building
-  collisionRects.push({ x: w * 0.03, y: h * 0.03, w: w * 0.25, h: h * 0.22 });
-
-  // top-right building
-  collisionRects.push({ x: w * 0.72, y: h * 0.03, w: w * 0.23, h: h * 0.25 });
-
-  // bottom-left building
-  collisionRects.push({ x: w * 0.05, y: h * 0.60, w: w * 0.28, h: h * 0.27 });
-
-  // central monument area
-  collisionRects.push({ x: w * 0.40, y: h * 0.48, w: w * 0.15, h: h * 0.12 });
-
-  // right graves
-  collisionRects.push({ x: w * 0.68, y: h * 0.48, w: w * 0.23, h: h * 0.30 });
-
-  // inner fence: 4 segments approximating the grey fence
-  collisionRects.push({ x: w * 0.30, y: h * 0.20, w: w * 0.45, h: 10 });
-  collisionRects.push({ x: w * 0.30, y: h * 0.20, w: 10, h: h * 0.40 });
-  collisionRects.push({ x: w * 0.30, y: h * 0.60, w: w * 0.45, h: 10 });
-  collisionRects.push({ x: w * 0.75, y: h * 0.20, w: 10, h: h * 0.40 });
+// ==================================
+// AUTO COLLISION FROM IMAGE
+// ==================================
+function isBlueFloor(r, g, b) {
+  // your floor is bright blue-ish, so: high B, lower R/G
+  return b > 180 && r < 120 && g < 120;
 }
 
+function buildCollisionMapFromImage(img) {
+  const off = document.createElement("canvas");
+  off.width = img.width;
+  off.height = img.height;
+  const octx = off.getContext("2d");
+  octx.drawImage(img, 0, 0);
+
+  const imgData = octx.getImageData(0, 0, img.width, img.height).data;
+
+  const step = 20; // scan resolution
+  const tempRects = [];
+
+  for (let y = 0; y < img.height; y += step) {
+    for (let x = 0; x < img.width; x += step) {
+      const idx = (y * img.width + x) * 4;
+      const r = imgData[idx];
+      const g = imgData[idx + 1];
+      const b = imgData[idx + 2];
+
+      if (!isBlueFloor(r, g, b)) {
+        // make this a blocking cell
+        tempRects.push({ x, y, w: step, h: step });
+      }
+    }
+  }
+
+  // scale rects to actual canvas size
+  const scaleX = canvas.width / img.width;
+  const scaleY = canvas.height / img.height;
+  collisionRects = tempRects.map(r => ({
+    x: r.x * scaleX,
+    y: r.y * scaleY,
+    w: r.w * scaleX,
+    h: r.h * scaleY
+  }));
+}
+
+// spawn enemies
 function spawnZombies() {
   zombies = [];
   const count = 5 + level * 2;
@@ -280,17 +291,15 @@ function spawnZombies() {
     });
   }
   bullets = [];
-  // if player still only has flashlight, spawn pistol near them
+  // guarantee a gun
   if (hero && hero.currentWeapon === "flashlight") {
-    pendingPickup = {
-      x: hero.x + 80,
-      y: hero.y - 40
-    };
+    pendingPickup = { x: hero.x + 80, y: hero.y - 40 };
   } else {
     pendingPickup = null;
   }
 }
 
+// main loop
 function gameLoop(t) {
   if (gameOver) return;
   update(t);
@@ -299,8 +308,7 @@ function gameLoop(t) {
 }
 
 function update(t) {
-  let dx = 0,
-    dy = 0;
+  let dx = 0, dy = 0;
   if (keys.w || keys.ArrowUp) dy -= hero.speed;
   if (keys.s || keys.ArrowDown) dy += hero.speed;
   if (keys.a || keys.ArrowLeft) dx -= hero.speed;
@@ -308,7 +316,7 @@ function update(t) {
 
   if (dx !== 0 || dy !== 0) hero.walkTime += 0.12;
 
-  tryMoveHero(dx, dy);
+  moveHeroWithCollisions(dx, dy);
 
   if (keys.mouseDown) tryFire(t);
 
@@ -316,7 +324,7 @@ function update(t) {
   bullets = bullets.filter(b => {
     b.x += Math.cos(b.angle) * b.speed;
     b.y += Math.sin(b.angle) * b.speed;
-    b.life -= 1;
+    b.life--;
     return b.life > 0;
   });
 
@@ -334,10 +342,10 @@ function update(t) {
     });
   });
 
-  // zombies move and bite
+  // zombies move -> bite
   zombies.forEach(z => {
     if (z.dying) {
-      z.dieTimer -= 1;
+      z.dieTimer--;
     } else {
       const ang = Math.atan2(hero.y - z.y, hero.x - z.x);
       z.x += Math.cos(ang) * z.speed;
@@ -361,18 +369,9 @@ function update(t) {
     door.active = true;
   }
 
-  // show interact if near pickup or door
-  const nearPickup =
-    pendingPickup &&
-    Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40;
-  const nearDoor =
-    door &&
-    door.active &&
-    Math.hypot(
-      hero.x - (door.x + 40),
-      hero.y - (door.y + 30)
-    ) < 50;
-
+  // show interact
+  const nearPickup = pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40;
+  const nearDoor = door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50;
   if (nearPickup || nearDoor) {
     interactBox.classList.remove("hidden");
   } else {
@@ -383,31 +382,32 @@ function update(t) {
   if (muzzleFlashTimer > 0) muzzleFlashTimer -= 16;
 }
 
-function tryMoveHero(dx, dy) {
-  const newX = hero.x + dx;
-  const newY = hero.y + dy;
+// movement with collisions
+function moveHeroWithCollisions(dx, dy) {
   const half = 14;
 
   // X
+  const newX = hero.x + dx;
   const xBlocked = collisionRects.some(r =>
-    rectContainsPoint(r, newX - half, hero.y)
-  ) ||
-    collisionRects.some(r => rectContainsPoint(r, newX + half, hero.y)) ||
-    collisionRects.some(r => rectContainsPoint(r, newX, hero.y - half)) ||
-    collisionRects.some(r => rectContainsPoint(r, newX, hero.y + half));
+    pointInRect(newX - half, hero.y, r) ||
+    pointInRect(newX + half, hero.y, r) ||
+    pointInRect(newX, hero.y - half, r) ||
+    pointInRect(newX, hero.y + half, r)
+  );
   if (!xBlocked) hero.x = newX;
 
   // Y
+  const newY = hero.y + dy;
   const yBlocked = collisionRects.some(r =>
-    rectContainsPoint(r, hero.x, newY - half)
-  ) ||
-    collisionRects.some(r => rectContainsPoint(r, hero.x, newY + half)) ||
-    collisionRects.some(r => rectContainsPoint(r, hero.x - half, newY)) ||
-    collisionRects.some(r => rectContainsPoint(r, hero.x + half, newY));
+    pointInRect(hero.x, newY - half, r) ||
+    pointInRect(hero.x, newY + half, r) ||
+    pointInRect(hero.x - half, newY, r) ||
+    pointInRect(hero.x + half, newY, r)
+  );
   if (!yBlocked) hero.y = newY;
 }
 
-function rectContainsPoint(r, px, py) {
+function pointInRect(px, py, r) {
   return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 }
 
@@ -416,7 +416,6 @@ function tryFire(t) {
   if (!weap.canFire) return;
   if (t - lastFire < weap.fireRate) return;
   lastFire = t;
-
   bullets.push({
     x: hero.x + Math.cos(hero.angle) * 20,
     y: hero.y + Math.sin(hero.angle) * 20,
@@ -428,25 +427,16 @@ function tryFire(t) {
 }
 
 function tryInteract() {
-  // pickup
-  if (
-    pendingPickup &&
-    Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40
-  ) {
+  if (pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40) {
     hero.currentWeapon = "pistol";
     pendingPickup = null;
     hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
     saveHero();
     return;
   }
-
   // door
-  if (
-    door &&
-    door.active &&
-    Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50
-  ) {
-    level += 1;
+  if (door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50) {
+    level++;
     hudLevel.textContent = "Zone: " + level;
     spawnZombies();
     door.active = false;
@@ -454,9 +444,23 @@ function tryInteract() {
   }
 }
 
+// drawing
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawBackground();
+
+  // background
+  if (bgImage.complete) {
+    ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // DEBUG: show collision zones
+  if (DEBUG_COLLISIONS) {
+    drawCollisionDebug();
+  }
+
   drawDoor();
   drawZombies();
   drawBullets();
@@ -465,20 +469,20 @@ function draw() {
   drawPickup();
 }
 
-function drawBackground() {
-  if (bgImage.complete) {
-    ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
-  } else {
-    ctx.fillStyle = "#020617";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
+function drawCollisionDebug() {
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,0,0,0.6)";
+  ctx.fillStyle = "rgba(255,0,0,0.15)";
+  collisionRects.forEach(r => {
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+  });
+  ctx.restore();
 }
 
 function drawDoor() {
   if (!door) return;
-  ctx.fillStyle = door.active
-    ? "rgba(34,197,94,0.9)"
-    : "rgba(15,23,42,0.8)";
+  ctx.fillStyle = door.active ? "rgba(34,197,94,0.9)" : "rgba(15,23,42,0.8)";
   ctx.fillRect(door.x, door.y, 80, 60);
 }
 
@@ -513,10 +517,7 @@ function drawBullets() {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(b.x, b.y);
-    ctx.lineTo(
-      b.x - Math.cos(b.angle) * 6,
-      b.y - Math.sin(b.angle) * 6
-    );
+    ctx.lineTo(b.x - Math.cos(b.angle) * 6, b.y - Math.sin(b.angle) * 6);
     ctx.stroke();
   });
 }
@@ -566,9 +567,11 @@ function drawLightOrLaser() {
   if (hero.currentWeapon === "flashlight") {
     const handX = hero.x + Math.cos(hero.angle) * 14;
     const handY = hero.y - 2 + Math.sin(hero.angle) * 14;
+
     ctx.save();
     ctx.translate(handX, handY);
     ctx.rotate(hero.angle);
+
     const beamLen = 320;
     const beamWidth = 90;
     const grad = ctx.createRadialGradient(0, 0, 2, 0, 0, beamLen);
@@ -581,12 +584,14 @@ function drawLightOrLaser() {
     ctx.lineTo(beamLen, beamWidth);
     ctx.closePath();
     ctx.fill();
+
     ctx.restore();
   } else {
     const handX = hero.x + Math.cos(hero.angle) * 14;
     const handY = hero.y - 2 + Math.sin(hero.angle) * 14;
     const endX = handX + Math.cos(hero.angle) * 360;
     const endY = handY + Math.sin(hero.angle) * 360;
+
     ctx.save();
     ctx.lineWidth = 3;
     const grad = ctx.createLinearGradient(handX, handY, endX, endY);
