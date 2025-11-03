@@ -1,6 +1,5 @@
 // game.js
-// collisions only, pause menu, editor mode, set spawn, weapon spawns,
-// + ghost/no-collision toggle + teleport to safe spot
+// start at x:1123.3, y:821.4
 
 // ===== DOM refs =====
 const charScreen = document.getElementById("char-screen");
@@ -50,9 +49,9 @@ let door = null;
 let gameOver = false;
 let pendingPickup = null;
 
-// spawn + weapon spawns
-let savedSpawn = null;     // {x,y}
-let weaponSpawns = [];     // [{x,y}...]
+// hardcoded spawn you wanted
+let savedSpawn = { x: 1123.3, y: 821.4 };
+let weaponSpawns = [];
 
 // ===== data =====
 const survivorPresets = [
@@ -135,7 +134,7 @@ makePauseBtn("Editor mode (B)", () => {
 makePauseBtn("Set spawn to here", () => {
   if (hero) {
     savedSpawn = { x: hero.x, y: hero.y };
-    console.log("📍 spawn set to", savedSpawn);
+    console.log(`📍 spawn set to x:${savedSpawn.x.toFixed(0)} y:${savedSpawn.y.toFixed(0)}`);
   }
 });
 makePauseBtn("Add weapon spawn here", () => {
@@ -200,7 +199,6 @@ function renderCharacterGrid() {
     card.addEventListener("click", () => {
       selectedCharId = p.id;
       document.querySelectorAll(".character-card").forEach(el => el.classList.remove("selected"));
-      card.addEventListener("click", () => {});
       card.classList.add("selected");
     });
 
@@ -216,6 +214,7 @@ function startGame() {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
 
+  // use your hardcoded spawn
   const spawnX = savedSpawn ? savedSpawn.x : canvas.width / 2;
   const spawnY = savedSpawn ? savedSpawn.y : canvas.height - 200;
 
@@ -345,11 +344,10 @@ canvas.addEventListener("contextmenu", e => {
   if (EDIT_COLLISIONS) e.preventDefault();
 });
 
-// ===== collisions (ONLY your boxes) =====
+// ===== collisions (your list) =====
 function buildCollisionMapFromImage() {
   const compiled = [];
-
-  // your logged boxes (same list as before) ↓↓↓
+  // ---- your logged boxes ----
   compiled.push({ x: 755, y: 431, w: 379, h: 111 });
   compiled.push({ x: 887, y: 213, w: 38, h: 23 });
   compiled.push({ x: 926, y: 211, w: 42, h: 13 });
@@ -489,11 +487,11 @@ function buildCollisionMapFromImage() {
   compiled.push({ x: 1847, y: 337, w: 23, h: 266 });
   compiled.push({ x: 873, y: 693, w: 152, h: 36 });
   compiled.push({ x: 881, y: 725, w: 140, h: 33 });
-
+  // -------------------------
   collisionRects = compiled;
 }
 
-// ===== game loop =====
+// ===== game logic =====
 function placeDoor() {
   door = { x: canvas.width / 2 - 40, y: canvas.height - 120, active: false };
 }
@@ -513,7 +511,6 @@ function spawnZombies() {
   }
   bullets = [];
 
-  // weapon pickup: use placed spawn if exists
   if (hero && hero.currentWeapon === "flashlight") {
     if (weaponSpawns.length > 0) {
       pendingPickup = { x: weaponSpawns[0].x, y: weaponSpawns[0].y };
