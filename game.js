@@ -1,5 +1,6 @@
 // game.js
-// collisions only (no auto), pause menu, editor toggle, set spawn, weapon spawns
+// collisions only, pause menu, editor mode, set spawn, weapon spawns,
+// + ghost/no-collision toggle + teleport to safe spot
 
 // ===== DOM refs =====
 const charScreen = document.getElementById("char-screen");
@@ -20,11 +21,12 @@ const interactBox = document.getElementById("interact-box");
 const deathScreen = document.getElementById("death-screen");
 const retryBtn = document.getElementById("retry-btn");
 
-// ===== debug flags =====
+// ===== debug / flags =====
 let DEBUG_COLLISIONS = true; // L
 let coordMode = false;       // C
 let EDIT_COLLISIONS = false; // B
 let isPaused = false;
+let GHOST_MODE = false;      // walk through walls
 
 // ===== editor vars =====
 let lastMousePos = null;
@@ -49,9 +51,10 @@ let gameOver = false;
 let pendingPickup = null;
 
 // spawn + weapon spawns
-let savedSpawn = null;              // {x,y}
-let weaponSpawns = [];              // [{x,y}, ...]
+let savedSpawn = null;     // {x,y}
+let weaponSpawns = [];     // [{x,y}...]
 
+// ===== data =====
 const survivorPresets = [
   { id: "operator", name: "Zone Operator", role: "Armored", body: "#1f2937", jacket: "#f97316", pants: "#0f172a", skin: "#fef3c7", gear: "helmet", class: "operator" },
   { id: "scout", name: "Tunnel Scout", role: "Light", body: "#0f172a", jacket: "#38bdf8", pants: "#020617", skin: "#fee2e2", gear: "hood", class: "scout" },
@@ -94,7 +97,6 @@ pauseOverlay.style.display = "none";
 pauseOverlay.style.background = "rgba(2,6,23,0.75)";
 pauseOverlay.style.backdropFilter = "blur(4px)";
 pauseOverlay.style.zIndex = "998";
-pauseOverlay.style.display = "none";
 pauseOverlay.style.alignItems = "center";
 pauseOverlay.style.justifyContent = "center";
 
@@ -142,6 +144,17 @@ makePauseBtn("Add weapon spawn here", () => {
     console.log("🔫 weapon spawn added", hero.x, hero.y);
   }
 });
+makePauseBtn("Toggle ghost (walk through)", () => {
+  GHOST_MODE = !GHOST_MODE;
+  console.log(GHOST_MODE ? "👻 ghost mode ON" : "👻 ghost mode OFF");
+});
+makePauseBtn("Teleport to safe spot", () => {
+  if (hero) {
+    hero.x = canvas.width / 2;
+    hero.y = canvas.height - 200;
+    console.log("🟢 teleported to safe spot");
+  }
+});
 makePauseBtn("Close", () => togglePause(false));
 
 // ===== init / resize =====
@@ -187,6 +200,7 @@ function renderCharacterGrid() {
     card.addEventListener("click", () => {
       selectedCharId = p.id;
       document.querySelectorAll(".character-card").forEach(el => el.classList.remove("selected"));
+      card.addEventListener("click", () => {});
       card.classList.add("selected");
     });
 
@@ -335,7 +349,7 @@ canvas.addEventListener("contextmenu", e => {
 function buildCollisionMapFromImage() {
   const compiled = [];
 
-  // your logged boxes:
+  // your logged boxes (same list as before) ↓↓↓
   compiled.push({ x: 755, y: 431, w: 379, h: 111 });
   compiled.push({ x: 887, y: 213, w: 38, h: 23 });
   compiled.push({ x: 926, y: 211, w: 42, h: 13 });
@@ -479,7 +493,7 @@ function buildCollisionMapFromImage() {
   collisionRects = compiled;
 }
 
-// ===== game logic =====
+// ===== game loop =====
 function placeDoor() {
   door = { x: canvas.width / 2 - 40, y: canvas.height - 120, active: false };
 }
@@ -499,13 +513,11 @@ function spawnZombies() {
   }
   bullets = [];
 
-  // weapon pickup: prefer placed spawns
+  // weapon pickup: use placed spawn if exists
   if (hero && hero.currentWeapon === "flashlight") {
     if (weaponSpawns.length > 0) {
-      // use the first one
       pendingPickup = { x: weaponSpawns[0].x, y: weaponSpawns[0].y };
     } else {
-      // fallback next to player
       pendingPickup = { x: hero.x + 80, y: hero.y - 40 };
     }
   } else {
@@ -560,7 +572,7 @@ function update(t) {
       const ang = Math.atan2(hero.y - z.y, hero.x - z.x);
       z.x += Math.cos(ang) * z.speed;
       z.y += Math.sin(ang) * z.speed;
-      if (Math.hypot(hero.x - z.x, hero.y - z.y) < 22) {
+      if (!GHOST_MODE && Math.hypot(hero.x - z.x, hero.y - z.y) < 22) {
         hero.hp -= 0.35;
         if (hero.hp <= 0) {
           hero.hp = 0;
@@ -585,7 +597,7 @@ function update(t) {
   hudHp.textContent = "HP: " + Math.ceil(hero.hp);
 }
 
-// ===== movement / collisions =====
+// ===== collisions / movement =====
 function pointInRect(px, py, r) {
   return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 }
@@ -595,7 +607,14 @@ function isBlockedPoint(px, py) {
     paintedColliders.some(r => pointInRect(px, py, r))
   );
 }
+
 function moveHeroWithCollisions(dx, dy) {
+  if (GHOST_MODE) {
+    hero.x += dx;
+    hero.y += dy;
+    return;
+  }
+
   const half = 14;
   const newX = hero.x + dx;
   const xBlocked =
