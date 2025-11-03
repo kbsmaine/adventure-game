@@ -14,10 +14,8 @@
       Name:
       <input id="hero-name" type="text" placeholder="Riley" maxlength="14" />
     </label>
-
     <p class="label">Survivor presets</p>
     <div id="character-grid" class="character-grid"></div>
-
     <button id="start-btn">Enter Streets</button>
   </div>
 
@@ -28,8 +26,13 @@
       <span id="hud-class"></span>
       <span id="hud-item"></span>
       <span id="hud-level"></span>
+      <span id="hud-hp"></span>
     </div>
     <div id="interact-box" class="hidden">Press E</div>
+    <div id="death-screen" class="hidden">
+      <h2>You died</h2>
+      <button id="retry-btn">Retry</button>
+    </div>
   </div>
 
   <script src="game.js"></script>

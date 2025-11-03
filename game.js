@@ -1,5 +1,5 @@
-// Quarantine Streets v3
-// full screen, animated player, flashlight->gun, enemy waves, level doors, dynamic tiles
+// Quarantine Streets v4
+// apocalyptic map: buildings, burning cars, chests; player health; zombie damage; death anim; loot; attachments
 
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
@@ -14,7 +14,10 @@ const hudName = document.getElementById("hud-name");
 const hudClass = document.getElementById("hud-class");
 const hudItem = document.getElementById("hud-item");
 const hudLevel = document.getElementById("hud-level");
+const hudHp = document.getElementById("hud-hp");
 const interactBox = document.getElementById("interact-box");
+const deathScreen = document.getElementById("death-screen");
+const retryBtn = document.getElementById("retry-btn");
 
 let hero = null;
 let selectedCharId = null;
@@ -24,6 +27,7 @@ let zombies = [];
 let bullets = [];
 let muzzleFlashTimer = 0;
 let door = null;
+let gameOver = false;
 
 const survivorPresets = [
   {
@@ -80,16 +84,16 @@ const weapons = {
   pistol: {
     name: "9mm Pistol",
     canFire: true,
-    fireRate: 280, // ms
+    fireRate: 280,
     bulletSpeed: 7,
     damage: 1,
-    color: "rgba(252,76,2,1)"
+    color: "rgba(252,76,2,1)",
+    spread: 0
   }
 };
 
 let lastFire = 0;
 
-// input
 const keys = {
   ArrowUp: false,
   ArrowDown: false,
@@ -144,7 +148,7 @@ function renderCharacterGrid() {
 renderCharacterGrid();
 
 (function loadSavedHero() {
-  const saved = localStorage.getItem("qs_hero_v3");
+  const saved = localStorage.getItem("qs_hero_v4");
   if (saved) {
     const data = JSON.parse(saved);
     hero = {
@@ -155,12 +159,16 @@ renderCharacterGrid();
       speed: 2.2,
       walkTime: 0,
       currentWeapon: data.currentWeapon || "flashlight",
+      hp: data.hp || 100,
+      maxHp: 100,
+      attachments: data.attachments || []
     };
     level = data.level || 1;
     hudName.textContent = hero.name;
     hudClass.textContent = hero.class;
     hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
     hudLevel.textContent = "Zone: " + level;
+    hudHp.textContent = "HP: " + hero.hp;
     charScreen.classList.remove("active");
     gameScreen.classList.add("active");
     generateLevel();
@@ -189,6 +197,9 @@ startBtn.addEventListener("click", () => {
     speed: 2.3,
     walkTime: 0,
     currentWeapon: "flashlight",
+    hp: 100,
+    maxHp: 100,
+    attachments: []
   };
   level = 1;
 
@@ -197,6 +208,7 @@ startBtn.addEventListener("click", () => {
   hudClass.textContent = hero.class;
   hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
   hudLevel.textContent = "Zone: " + level;
+  hudHp.textContent = "HP: " + hero.hp;
 
   charScreen.classList.remove("active");
   gameScreen.classList.add("active");
@@ -204,19 +216,32 @@ startBtn.addEventListener("click", () => {
   requestAnimationFrame(gameLoop);
 });
 
+retryBtn.addEventListener("click", () => {
+  deathScreen.classList.add("hidden");
+  gameOver = false;
+  hero.hp = hero.maxHp;
+  generateLevel();
+  requestAnimationFrame(gameLoop);
+});
+
 function saveHero() {
-  localStorage.setItem("qs_hero_v3", JSON.stringify({
-    name: hero.name,
-    class: hero.class,
-    presetId: hero.presetId,
-    body: hero.body,
-    jacket: hero.jacket,
-    pants: hero.pants,
-    skin: hero.skin,
-    gear: hero.gear,
-    currentWeapon: hero.currentWeapon,
-    level: level,
-  }));
+  localStorage.setItem(
+    "qs_hero_v4",
+    JSON.stringify({
+      name: hero.name,
+      class: hero.class,
+      presetId: hero.presetId,
+      body: hero.body,
+      jacket: hero.jacket,
+      pants: hero.pants,
+      skin: hero.skin,
+      gear: hero.gear,
+      currentWeapon: hero.currentWeapon,
+      level: level,
+      hp: hero.hp,
+      attachments: hero.attachments
+    })
+  );
 }
 
 window.addEventListener("keydown", (e) => {
@@ -238,53 +263,51 @@ canvas.addEventListener("mousemove", (e) => {
   hero.angle = Math.atan2(my - hero.y, mx - hero.x);
 });
 
-// generate level map, zombies, door, pickup
 function generateLevel() {
   tiles = [];
   const cols = Math.ceil(canvas.width / 96);
   const rows = Math.ceil(canvas.height / 96);
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      tiles.push({
-        x: c * 96,
-        y: r * 96,
-        kind: (r === 0 || c === 0 || r === rows - 1 || c === cols - 1) ? "wall" : (Math.random() < 0.1 ? "deco" : "road")
-      });
+      let kind = "road";
+      if (r === 0 || c === 0 || r === rows - 1 || c === cols - 1) {
+        kind = "wall";
+      } else {
+        const roll = Math.random();
+        if (roll < 0.08) kind = "building";
+        else if (roll < 0.14) kind = "car";
+        else if (roll < 0.18) kind = "chest";
+        else kind = "road";
+      }
+      tiles.push({ x: c * 96, y: r * 96, kind, opened: false });
     }
   }
 
-  // zombies
   zombies = [];
-  const count = 4 + level * 2;
+  const count = 5 + level * 2;
   for (let i = 0; i < count; i++) {
     zombies.push({
       x: canvas.width * (0.5 + Math.random() * 0.4),
       y: canvas.height * (0.2 + Math.random() * 0.5),
       hp: 1,
       phase: Math.random() * Math.PI * 2,
-      speed: 0.4 + Math.random() * 0.2,
+      speed: 0.35 + Math.random() * 0.2,
+      dying: false,
+      dieTimer: 0
     });
   }
 
-  // door to next level (inactive until zombies cleared)
   door = {
     x: canvas.width - 120,
     y: canvas.height * 0.5,
     active: false,
   };
 
-  // weapon pickup only if not pistol yet
-  if (hero.currentWeapon === "flashlight") {
-    // reuse door pos offset
-    tiles.push({
-      x: canvas.width * 0.65,
-      y: canvas.height * 0.3,
-      kind: "pickup"
-    });
-  }
+  bullets = [];
 }
 
 function gameLoop(t) {
+  if (gameOver) return;
   update(t);
   draw();
   requestAnimationFrame(gameLoop);
@@ -307,17 +330,13 @@ function update(t) {
 
   hero.x += dx;
   hero.y += dy;
-
-  // clamp
   hero.x = Math.max(40, Math.min(canvas.width - 40, hero.x));
   hero.y = Math.max(40, Math.min(canvas.height - 40, hero.y));
 
-  // firing
   if (keys.mouseDown) {
     tryFire(t);
   }
 
-  // update bullets
   bullets = bullets.filter((b) => {
     b.x += Math.cos(b.angle) * b.speed;
     b.y += Math.sin(b.angle) * b.speed;
@@ -325,45 +344,60 @@ function update(t) {
     return b.life > 0;
   });
 
-  // bullet -> zombie
   bullets.forEach((b) => {
     zombies.forEach((z) => {
-      if (z.hp > 0) {
+      if (!z.dying && z.hp > 0) {
         const d = Math.hypot(b.x - z.x, b.y - z.y);
         if (d < 18) {
           z.hp -= weapons[hero.currentWeapon].damage || 1;
           b.life = 0;
+          if (z.hp <= 0) {
+            z.dying = true;
+            z.dieTimer = 30;
+          }
         }
       }
     });
   });
-  zombies = zombies.filter((z) => z.hp > 0);
 
-  // zombies move slowly toward player
   zombies.forEach((z) => {
-    const ang = Math.atan2(hero.y - z.y, hero.x - z.x);
-    z.x += Math.cos(ang) * z.speed;
-    z.y += Math.sin(ang) * z.speed;
-    z.phase += 0.04;
+    if (z.dying) {
+      z.dieTimer -= 1;
+    } else {
+      const ang = Math.atan2(hero.y - z.y, hero.x - z.x);
+      z.x += Math.cos(ang) * z.speed;
+      z.y += Math.sin(ang) * z.speed;
+
+      // bite player
+      const d = Math.hypot(hero.x - z.x, hero.y - z.y);
+      if (d < 22) {
+        hero.hp -= 0.35; // damage
+        if (hero.hp <= 0) {
+          hero.hp = 0;
+          hudHp.textContent = "HP: 0";
+          gameOver = true;
+          deathScreen.classList.remove("hidden");
+        }
+      }
+    }
   });
 
-  // if all zombies dead -> door active
-  if (zombies.length === 0) {
+  zombies = zombies.filter((z) => !z.dying || z.dieTimer > 0);
+
+  if (zombies.filter((z) => !z.dying).length === 0) {
     door.active = true;
   }
 
-  // interact prompt
-  const nearPickup = tiles.find((t) => t.kind === "pickup" && dist(hero.x, hero.y, t.x + 32, t.y + 24) < 40);
-  const nearDoor = door && dist(hero.x, hero.y, door.x + 32, door.y + 32) < 45 && door.active;
-  if (nearPickup || nearDoor) {
+  const nearChest = tiles.find((t) => t.kind === "chest" && !t.opened && dist(hero.x, hero.y, t.x + 48, t.y + 48) < 45);
+  const nearDoor = door && door.active && dist(hero.x, hero.y, door.x + 32, door.y + 32) < 45;
+  if (nearChest || nearDoor) {
     interactBox.classList.remove("hidden");
   } else {
     interactBox.classList.add("hidden");
   }
 
-  if (muzzleFlashTimer > 0) {
-    muzzleFlashTimer -= 16;
-  }
+  hudHp.textContent = "HP: " + Math.ceil(hero.hp);
+  if (muzzleFlashTimer > 0) muzzleFlashTimer -= 16;
 }
 
 function dist(x1, y1, x2, y2) {
@@ -378,29 +412,41 @@ function tryFire(t) {
   if (t - lastFire < weap.fireRate) return;
   lastFire = t;
 
+  const spread = weap.spread || 0;
+  const angle = hero.angle + (Math.random() * spread - spread / 2);
+
   bullets.push({
-    x: hero.x + Math.cos(hero.angle) * 20,
-    y: hero.y + Math.sin(hero.angle) * 20,
-    angle: hero.angle,
+    x: hero.x + Math.cos(angle) * 20,
+    y: hero.y + Math.sin(angle) * 20,
+    angle: angle,
     speed: weap.bulletSpeed,
     life: 70,
   });
-
   muzzleFlashTimer = 90;
 }
 
 function tryInteract() {
-  // pickup weapon
-  const pickupIdx = tiles.findIndex((t) => t.kind === "pickup" && dist(hero.x, hero.y, t.x + 32, t.y + 24) < 40);
-  if (pickupIdx !== -1) {
-    hero.currentWeapon = "pistol";
-    tiles.splice(pickupIdx, 1);
-    hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
+  // chest
+  const chest = tiles.find((t) => t.kind === "chest" && !t.opened && dist(hero.x, hero.y, t.x + 48, t.y + 48) < 45);
+  if (chest) {
+    chest.opened = true;
+    // loot roll: bandage or attachment
+    if (Math.random() < 0.6) {
+      // bandage: heal 30
+      hero.hp = Math.min(hero.maxHp, hero.hp + 30);
+    } else {
+      // attachment: improve pistol
+      hero.attachments.push("improved-slide");
+      if (hero.currentWeapon === "pistol") {
+        weapons.pistol.fireRate = 200;
+        weapons.pistol.damage = 1.3;
+      }
+    }
     saveHero();
     return;
   }
 
-  // next level
+  // door
   if (door && door.active && dist(hero.x, hero.y, door.x + 32, door.y + 32) < 45) {
     level += 1;
     hudLevel.textContent = "Zone: " + level;
@@ -411,20 +457,17 @@ function tryInteract() {
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawMap();
-  drawDoor();
+  drawBackground();
   drawTiles();
+  drawDoor();
   drawZombies();
   drawBullets();
   drawHero();
   drawLightOrLaser();
 }
 
-function drawMap() {
-  const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  g.addColorStop(0, "#0f172a");
-  g.addColorStop(1, "#020617");
-  ctx.fillStyle = g;
+function drawBackground() {
+  ctx.fillStyle = "#020617";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
@@ -433,27 +476,48 @@ function drawTiles() {
     if (t.kind === "road") {
       ctx.fillStyle = "#111827";
       ctx.fillRect(t.x, t.y, 96, 96);
-      ctx.strokeStyle = "rgba(15,23,42,0.3)";
+      ctx.strokeStyle = "rgba(15,23,42,0.25)";
       ctx.strokeRect(t.x, t.y, 96, 96);
-    } else if (t.kind === "deco") {
+    } else if (t.kind === "building") {
       ctx.fillStyle = "#0f172a";
       ctx.fillRect(t.x, t.y, 96, 96);
-      // crates
+      ctx.fillStyle = "rgba(148,163,184,0.12)";
+      ctx.fillRect(t.x + 10, t.y + 10, 20, 14);
+      ctx.fillRect(t.x + 40, t.y + 10, 20, 14);
+      ctx.fillRect(t.x + 10, t.y + 36, 20, 14);
+    } else if (t.kind === "car") {
+      // burnt car
       ctx.fillStyle = "#1f2937";
-      ctx.fillRect(t.x + 10, t.y + 40, 30, 20);
-      ctx.fillStyle = "#0f172a";
-      ctx.fillRect(t.x + 40, t.y + 10, 20, 30);
+      ctx.fillRect(t.x + 10, t.y + 28, 70, 30);
+      ctx.fillStyle = "#020617";
+      ctx.fillRect(t.x + 18, t.y + 22, 40, 18);
+      // fire
+      const fx = t.x + 50;
+      const fy = t.y + 28;
+      const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, 35);
+      g.addColorStop(0, "rgba(251,113,133,1)");
+      g.addColorStop(1, "rgba(251,113,133,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(fx, fy, 35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(254,249,195,0.6)";
+      ctx.beginPath();
+      ctx.arc(fx, fy - 10, 12, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (t.kind === "chest") {
+      ctx.fillStyle = "#78350f";
+      ctx.fillRect(t.x + 18, t.y + 28, 60, 36);
+      if (t.opened) {
+        ctx.strokeStyle = "rgba(254,243,199,0.5)";
+        ctx.strokeRect(t.x + 18, t.y + 28, 60, 36);
+      } else {
+        ctx.fillStyle = "#f97316";
+        ctx.fillRect(t.x + 43, t.y + 38, 10, 12);
+      }
     } else if (t.kind === "wall") {
       ctx.fillStyle = "#020617";
       ctx.fillRect(t.x, t.y, 96, 96);
-    } else if (t.kind === "pickup") {
-      ctx.fillStyle = "#1f2937";
-      ctx.fillRect(t.x, t.y, 64, 48);
-      ctx.strokeStyle = "rgba(202,252,255,0.3)";
-      ctx.strokeRect(t.x, t.y, 64, 48);
-      ctx.fillStyle = "#fb7185";
-      ctx.fillRect(t.x + 22, t.y + 18, 20, 5);
-      ctx.fillRect(t.x + 36, t.y + 10, 3, 8);
     }
   });
 }
@@ -468,18 +532,30 @@ function drawDoor() {
 
 function drawZombies() {
   zombies.forEach((z) => {
-    ctx.fillStyle = "#14532d";
-    ctx.fillRect(z.x - 12, z.y - 10, 24, 32);
-    ctx.fillStyle = "#1c7c45";
-    ctx.fillRect(z.x - 20, z.y - 6, 8, 20);
-    ctx.fillRect(z.x + 12, z.y - 6, 8, 20);
-    ctx.fillStyle = "#166534";
-    ctx.beginPath();
-    ctx.arc(z.x, z.y - 16, 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#ef4444";
-    ctx.fillRect(z.x - 4, z.y - 18, 2, 2);
-    ctx.fillRect(z.x + 2, z.y - 18, 2, 2);
+    if (z.dying) {
+      // death animation: fade/red flash + shrink
+      const prog = z.dieTimer / 30;
+      ctx.save();
+      ctx.globalAlpha = prog;
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(z.x, z.y - 8, 20 * prog, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.fillStyle = "#14532d";
+      ctx.fillRect(z.x - 12, z.y - 10, 24, 32);
+      ctx.fillStyle = "#1c7c45";
+      ctx.fillRect(z.x - 20, z.y - 6, 8, 20);
+      ctx.fillRect(z.x + 12, z.y - 6, 8, 20);
+      ctx.fillStyle = "#166534";
+      ctx.beginPath();
+      ctx.arc(z.x, z.y - 16, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ef4444";
+      ctx.fillRect(z.x - 4, z.y - 18, 2, 2);
+      ctx.fillRect(z.x + 2, z.y - 18, 2, 2);
+    }
   });
 }
 
@@ -499,17 +575,14 @@ function drawHero() {
   const y = hero.y;
   const bob = Math.sin(hero.walkTime) * 1.5;
 
-  // shadow
   ctx.fillStyle = "rgba(0,0,0,0.25)";
   ctx.beginPath();
   ctx.ellipse(x, y + 16, 16, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // backpack
   ctx.fillStyle = "#7f1d1d";
   ctx.fillRect(x - 6, y - 2 + bob, 12, 10);
 
-  // legs with alternating bob
   const legOffset = Math.sin(hero.walkTime * 1.5) * 2;
   ctx.fillStyle = hero.pants;
   ctx.fillRect(x - 6 - legOffset, y + 4, 5, 14);
@@ -518,22 +591,18 @@ function drawHero() {
   ctx.fillRect(x - 6 - legOffset, y + 16, 6, 3);
   ctx.fillRect(x + 1 + legOffset, y + 16, 6, 3);
 
-  // torso / armor
   ctx.fillStyle = hero.jacket;
   ctx.fillRect(x - 10, y - 8 + bob, 20, 18);
 
-  // head
   ctx.fillStyle = hero.skin;
   ctx.beginPath();
   ctx.arc(x, y - 16 + bob, 8, 0, Math.PI * 2);
   ctx.fill();
 
-  // eyes
   ctx.fillStyle = "#020617";
   ctx.fillRect(x - 4, y - 18 + bob, 2, 2);
   ctx.fillRect(x + 2, y - 18 + bob, 2, 2);
 
-  // gear
   if (hero.gear === "helmet") {
     ctx.fillStyle = "#f97316";
     ctx.fillRect(x - 9, y - 23 + bob, 18, 5);
@@ -551,11 +620,8 @@ function drawHero() {
     ctx.fillRect(x - 7, y - 19 + bob, 14, 3);
   }
 
-  // left arm (swinging)
   ctx.fillStyle = hero.jacket;
   ctx.fillRect(x - 12, y - 2 + Math.cos(hero.walkTime) * 2, 4, 10);
-
-  // right arm is drawn in light/laser to align with angle
 }
 
 function drawLightOrLaser() {
@@ -612,13 +678,11 @@ function drawLaser() {
   ctx.lineTo(endX, endY);
   ctx.stroke();
 
-  // gun body
   ctx.translate(handX, handY);
   ctx.rotate(hero.angle);
   ctx.fillStyle = "#020617";
   ctx.fillRect(0, -3, 16, 6);
 
-  // muzzle flash when firing
   if (muzzleFlashTimer > 0) {
     ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.beginPath();
