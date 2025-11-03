@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mini Adventure</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="char-screen" class="screen active">
+    <h1>🗺️ Mini Adventure</h1>
+    <p>Create your hero.</p>
+    <label>
+      Name:
+      <input id="hero-name" type="text" placeholder="Hero" maxlength="14" />
+    </label>
+
+    <label>
+      Outfit color:
+      <input id="hero-color" type="color" value="#4f46e5" />
+    </label>
+
+    <label>
+      Class:
+      <select id="hero-class">
+        <option value="adventurer">Adventurer</option>
+        <option value="knight">Knight</option>
+        <option value="ranger">Ranger</option>
+        <option value="mage">Mage</option>
+      </select>
+    </label>
+
+    <button id="start-btn">Start Adventure</button>
+  </div>
+
+  <div id="game-screen" class="screen">
+    <canvas id="game-canvas" width="800" height="480"></canvas>
+    <div id="hud">
+      <span id="hud-name"></span>
+      <span id="hud-class"></span>
+      <span id="hud-pos"></span>
+    </div>
+    <div id="interact-box" class="hidden">Press E to talk</div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
