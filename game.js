@@ -1,6 +1,7 @@
 // game.js
-// only your collisions + editor + coord HUD
+// collisions only (no auto), pause menu, editor toggle, set spawn, weapon spawns
 
+// ===== DOM refs =====
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
 const startBtn = document.getElementById("start-btn");
@@ -19,19 +20,25 @@ const interactBox = document.getElementById("interact-box");
 const deathScreen = document.getElementById("death-screen");
 const retryBtn = document.getElementById("retry-btn");
 
+// ===== debug flags =====
 let DEBUG_COLLISIONS = true; // L
 let coordMode = false;       // C
 let EDIT_COLLISIONS = false; // B
+let isPaused = false;
 
+// ===== editor vars =====
 let lastMousePos = null;
 let paintedColliders = [];
 let dragStart = null;
 
+// ===== collisions =====
 let collisionRects = [];
 
+// ===== map image =====
 const bgImage = new Image();
 bgImage.src = "map.png";
 
+// ===== game state =====
 let hero = null;
 let selectedCharId = null;
 let level = 1;
@@ -40,6 +47,10 @@ let bullets = [];
 let door = null;
 let gameOver = false;
 let pendingPickup = null;
+
+// spawn + weapon spawns
+let savedSpawn = null;              // {x,y}
+let weaponSpawns = [];              // [{x,y}, ...]
 
 const survivorPresets = [
   { id: "operator", name: "Zone Operator", role: "Armored", body: "#1f2937", jacket: "#f97316", pants: "#0f172a", skin: "#fef3c7", gear: "helmet", class: "operator" },
@@ -59,7 +70,7 @@ const keys = {
   mouseDown: false
 };
 
-// coord HUD
+// ===== coord HUD =====
 const coordOverlay = document.createElement("div");
 coordOverlay.style.position = "fixed";
 coordOverlay.style.bottom = "8px";
@@ -75,12 +86,69 @@ coordOverlay.style.zIndex = "999";
 coordOverlay.style.display = "none";
 document.body.appendChild(coordOverlay);
 
-// ========== init / resize ==========
+// ===== pause menu =====
+const pauseOverlay = document.createElement("div");
+pauseOverlay.style.position = "fixed";
+pauseOverlay.style.inset = "0";
+pauseOverlay.style.display = "none";
+pauseOverlay.style.background = "rgba(2,6,23,0.75)";
+pauseOverlay.style.backdropFilter = "blur(4px)";
+pauseOverlay.style.zIndex = "998";
+pauseOverlay.style.display = "none";
+pauseOverlay.style.alignItems = "center";
+pauseOverlay.style.justifyContent = "center";
+
+const pausePanel = document.createElement("div");
+pausePanel.style.background = "rgba(15,23,42,0.9)";
+pausePanel.style.border = "1px solid rgba(148,163,184,0.25)";
+pausePanel.style.borderRadius = "12px";
+pausePanel.style.padding = "16px";
+pausePanel.style.minWidth = "220px";
+pausePanel.style.display = "flex";
+pausePanel.style.flexDirection = "column";
+pausePanel.style.gap = "8px";
+pausePanel.style.color = "#e2e8f0";
+pausePanel.innerHTML = `<h3 style="margin:0 0 6px 0;font-size:15px;">Paused</h3>`;
+pauseOverlay.appendChild(pausePanel);
+document.body.appendChild(pauseOverlay);
+
+function makePauseBtn(label, onClick) {
+  const btn = document.createElement("button");
+  btn.textContent = label;
+  btn.style.background = "rgba(30,41,59,0.7)";
+  btn.style.border = "1px solid rgba(148,163,184,0.2)";
+  btn.style.borderRadius = "6px";
+  btn.style.padding = "5px 8px";
+  btn.style.color = "#e2e8f0";
+  btn.style.cursor = "pointer";
+  btn.onclick = onClick;
+  pausePanel.appendChild(btn);
+}
+
+makePauseBtn("Resume", () => togglePause(false));
+makePauseBtn("Editor mode (B)", () => {
+  EDIT_COLLISIONS = true;
+  console.log("🧱 collision editor ON from pause");
+});
+makePauseBtn("Set spawn to here", () => {
+  if (hero) {
+    savedSpawn = { x: hero.x, y: hero.y };
+    console.log("📍 spawn set to", savedSpawn);
+  }
+});
+makePauseBtn("Add weapon spawn here", () => {
+  if (hero) {
+    weaponSpawns.push({ x: hero.x, y: hero.y });
+    console.log("🔫 weapon spawn added", hero.x, hero.y);
+  }
+});
+makePauseBtn("Close", () => togglePause(false));
+
+// ===== init / resize =====
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   placeDoor();
-  // we still call this so collisions re-scale if you resize
   buildCollisionMapFromImage();
 }
 window.addEventListener("resize", resizeCanvas);
@@ -92,7 +160,7 @@ bgImage.onload = () => {
 
 charScreen.classList.add("active");
 
-// ========== character screen ==========
+// ===== character screen =====
 function renderCharacterGrid() {
   charGrid.innerHTML = "";
   survivorPresets.forEach((p, i) => {
@@ -127,10 +195,15 @@ function renderCharacterGrid() {
 }
 renderCharacterGrid();
 
-// ========== start game ==========
-startBtn.addEventListener("click", () => {
+// ===== start game =====
+startBtn.addEventListener("click", startGame);
+
+function startGame() {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
+
+  const spawnX = savedSpawn ? savedSpawn.x : canvas.width / 2;
+  const spawnY = savedSpawn ? savedSpawn.y : canvas.height - 200;
 
   hero = {
     name: nm,
@@ -141,8 +214,8 @@ startBtn.addEventListener("click", () => {
     pants: preset.pants,
     skin: preset.skin,
     gear: preset.gear,
-    x: canvas.width / 2,
-    y: canvas.height - 200,
+    x: spawnX,
+    y: spawnY,
     angle: 0,
     speed: 2.3,
     walkTime: 0,
@@ -150,8 +223,8 @@ startBtn.addEventListener("click", () => {
     hp: 100,
     maxHp: 100
   };
-  level = 1;
 
+  level = 1;
   hudName.textContent = hero.name;
   hudClass.textContent = hero.class;
   hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
@@ -162,19 +235,33 @@ startBtn.addEventListener("click", () => {
   gameScreen.classList.add("active");
   placeDoor();
   spawnZombies();
+  isPaused = false;
   requestAnimationFrame(gameLoop);
-});
+}
 
 retryBtn.addEventListener("click", () => {
   deathScreen.classList.add("hidden");
   gameOver = false;
   hero.hp = hero.maxHp;
   spawnZombies();
+  isPaused = false;
   requestAnimationFrame(gameLoop);
 });
 
-// ========== input ==========
+// ===== pause helpers =====
+function togglePause(state) {
+  isPaused = state;
+  pauseOverlay.style.display = state ? "flex" : "none";
+}
+
+// ===== input =====
 window.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    togglePause(!isPaused);
+    return;
+  }
+  if (isPaused) return;
+
   if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
   if (e.key === "e" || e.key === "E") tryInteract();
   if (e.key === "l" || e.key === "L") DEBUG_COLLISIONS = !DEBUG_COLLISIONS;
@@ -188,16 +275,18 @@ window.addEventListener("keydown", e => {
       console.log("🧹 cleared painted colliders");
     } else {
       EDIT_COLLISIONS = !EDIT_COLLISIONS;
-      console.log(EDIT_COLLISIONS ? "🧱 collision editor ON" : "collision editor OFF");
+      console.log(EDIT_COLLISIONS ? "🧱 collision editor ON (drag)" : "collision editor OFF");
     }
   }
 });
 
 window.addEventListener("keyup", e => {
+  if (isPaused) return;
   if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
 });
 
 canvas.addEventListener("mousedown", e => {
+  if (isPaused) return;
   if (EDIT_COLLISIONS) {
     const rect = canvas.getBoundingClientRect();
     dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -206,6 +295,7 @@ canvas.addEventListener("mousedown", e => {
   }
 });
 canvas.addEventListener("mouseup", e => {
+  if (isPaused) return;
   if (EDIT_COLLISIONS && dragStart) {
     const rect = canvas.getBoundingClientRect();
     const x2 = e.clientX - rect.left;
@@ -221,14 +311,13 @@ canvas.addEventListener("mouseup", e => {
     keys.mouseDown = false;
   }
 });
-
 canvas.addEventListener("mousemove", e => {
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
   lastMousePos = { x: mx, y: my };
 
-  if (hero) {
+  if (!isPaused && hero) {
     hero.angle = Math.atan2(my - hero.y, mx - hero.x);
   }
 
@@ -238,18 +327,15 @@ canvas.addEventListener("mousemove", e => {
     coordOverlay.textContent = `x:${mx.toFixed(0)} y:${my.toFixed(0)} | rx:${rx} ry:${ry}`;
   }
 });
-
-// suppress right-click while editing
 canvas.addEventListener("contextmenu", e => {
   if (EDIT_COLLISIONS) e.preventDefault();
 });
 
-// ========== collisions (ONLY your boxes) ==========
+// ===== collisions (ONLY your boxes) =====
 function buildCollisionMapFromImage() {
-  // no auto-detection here — just your saved boxes
   const compiled = [];
 
-  // your boxes:
+  // your logged boxes:
   compiled.push({ x: 755, y: 431, w: 379, h: 111 });
   compiled.push({ x: 887, y: 213, w: 38, h: 23 });
   compiled.push({ x: 926, y: 211, w: 42, h: 13 });
@@ -393,7 +479,7 @@ function buildCollisionMapFromImage() {
   collisionRects = compiled;
 }
 
-// ========== game logic ==========
+// ===== game logic =====
 function placeDoor() {
   door = { x: canvas.width / 2 - 40, y: canvas.height - 120, active: false };
 }
@@ -412,16 +498,25 @@ function spawnZombies() {
     });
   }
   bullets = [];
+
+  // weapon pickup: prefer placed spawns
   if (hero && hero.currentWeapon === "flashlight") {
-    pendingPickup = { x: hero.x + 80, y: hero.y - 40 };
+    if (weaponSpawns.length > 0) {
+      // use the first one
+      pendingPickup = { x: weaponSpawns[0].x, y: weaponSpawns[0].y };
+    } else {
+      // fallback next to player
+      pendingPickup = { x: hero.x + 80, y: hero.y - 40 };
+    }
   } else {
     pendingPickup = null;
   }
 }
 
 function gameLoop(t) {
-  if (gameOver) return;
-  update(t);
+  if (!isPaused && !gameOver) {
+    update(t);
+  }
   draw();
   requestAnimationFrame(gameLoop);
 }
@@ -490,21 +585,18 @@ function update(t) {
   hudHp.textContent = "HP: " + Math.ceil(hero.hp);
 }
 
-// collisions check
+// ===== movement / collisions =====
 function pointInRect(px, py, r) {
   return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 }
-
 function isBlockedPoint(px, py) {
   return (
     collisionRects.some(r => pointInRect(px, py, r)) ||
     paintedColliders.some(r => pointInRect(px, py, r))
   );
 }
-
 function moveHeroWithCollisions(dx, dy) {
   const half = 14;
-
   const newX = hero.x + dx;
   const xBlocked =
     isBlockedPoint(newX - half, hero.y) ||
@@ -552,7 +644,7 @@ function tryInteract() {
   }
 }
 
-// ========== drawing ==========
+// ===== drawing =====
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -565,10 +657,13 @@ function draw() {
 
   if (DEBUG_COLLISIONS) drawCollisionDebug();
   drawDoor();
+  drawWeaponSpawns();
   drawZombies();
   drawBullets();
-  drawHero();
-  drawWeaponLight();
+  if (hero) {
+    drawHero();
+    drawWeaponLight();
+  }
   drawPickup();
   drawPaintedColliders();
 }
@@ -608,6 +703,20 @@ function drawDoor() {
   if (!door) return;
   ctx.fillStyle = door.active ? "rgba(34,197,94,0.9)" : "rgba(15,23,42,0.8)";
   ctx.fillRect(door.x, door.y, 80, 60);
+}
+
+function drawWeaponSpawns() {
+  if (weaponSpawns.length === 0) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(59,130,246,0.9)";
+  ctx.fillStyle = "rgba(59,130,246,0.4)";
+  weaponSpawns.forEach(s => {
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+  ctx.restore();
 }
 
 function drawZombies() {
