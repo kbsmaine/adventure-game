@@ -1,4 +1,5 @@
-// Quarantine Streets - darker, flashlight, zombies, survivor presets
+// Quarantine Streets - flashlight -> gun upgrade + deeper player model
+
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
 const startBtn = document.getElementById("start-btn");
@@ -10,6 +11,7 @@ const ctx = canvas.getContext("2d");
 
 const hudName = document.getElementById("hud-name");
 const hudClass = document.getElementById("hud-class");
+const hudItem = document.getElementById("hud-item");
 const interactBox = document.getElementById("interact-box");
 
 let hero = null;
@@ -61,6 +63,9 @@ const survivorPresets = [
     class: "ranger"
   }
 ];
+
+// pickup location for gun
+const gunPickup = { x: 720, y: 150, taken: false };
 
 const keys = {
   ArrowUp: false,
@@ -116,18 +121,20 @@ function renderCharacterGrid() {
 renderCharacterGrid();
 
 (function loadSavedHero() {
-  const saved = localStorage.getItem("qs_hero");
+  const saved = localStorage.getItem("qs_hero_v2");
   if (saved) {
     const data = JSON.parse(saved);
     hero = {
       ...data,
       x: 420,
       y: 290,
-      angle: data.angle || 0,
+      angle: 0,
       speed: 2.2,
+      inventory: { flashlight: true, gun: false, ...(data.inventory || {}) },
     };
     hudName.textContent = hero.name;
     hudClass.textContent = hero.class;
+    hudItem.textContent = hero.inventory.gun ? "Item: Laser sight" : "Item: Flashlight";
     charScreen.classList.remove("active");
     gameScreen.classList.add("active");
     requestAnimationFrame(gameLoop);
@@ -153,33 +160,45 @@ startBtn.addEventListener("click", () => {
     y: 290,
     angle: 0,
     speed: 2.2,
+    inventory: {
+      flashlight: true,
+      gun: false,
+    },
   };
 
-  localStorage.setItem("qs_hero", JSON.stringify({
-    name: hero.name,
-    class: hero.class,
-    presetId: hero.presetId,
-    body: hero.body,
-    jacket: hero.jacket,
-    pants: hero.pants,
-    skin: hero.skin,
-    gear: hero.gear,
-  }));
-
+  saveHero();
   hudName.textContent = hero.name;
   hudClass.textContent = hero.class;
+  hudItem.textContent = "Item: Flashlight";
 
   charScreen.classList.remove("active");
   gameScreen.classList.add("active");
   requestAnimationFrame(gameLoop);
 });
 
+function saveHero() {
+  localStorage.setItem(
+    "qs_hero_v2",
+    JSON.stringify({
+      name: hero.name,
+      class: hero.class,
+      presetId: hero.presetId,
+      body: hero.body,
+      jacket: hero.jacket,
+      pants: hero.pants,
+      skin: hero.skin,
+      gear: hero.gear,
+      inventory: hero.inventory,
+    })
+  );
+}
+
 window.addEventListener("keydown", (e) => {
   if (keys.hasOwnProperty(e.key)) {
     keys[e.key] = true;
   }
   if (e.key === "e" || e.key === "E") {
-    // future interactions
+    tryPickup();
   }
 });
 
@@ -207,41 +226,63 @@ function update(t) {
   hero.x += dx;
   hero.y += dy;
 
-  // clamp to canvas
   hero.x = Math.max(60, Math.min(canvas.width - 60, hero.x));
   hero.y = Math.max(60, Math.min(canvas.height - 60, hero.y));
 
-  // face movement direction
   if (dx !== 0 || dy !== 0) {
     hero.angle = Math.atan2(dy, dx);
   }
 
-  // animate zombies slowly forward
   zombies.forEach((z) => {
     z.phase += 0.01;
     z.y += Math.sin(z.phase) * 0.2;
   });
+
+  // show pickup prompt if close
+  if (!gunPickup.taken && dist(hero.x, hero.y, gunPickup.x, gunPickup.y) < 35) {
+    interactBox.classList.remove("hidden");
+  } else {
+    interactBox.classList.add("hidden");
+  }
+}
+
+function dist(x1, y1, x2, y2) {
+  const dx = x1 - x2;
+  const dy = y1 - y2;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+function tryPickup() {
+  if (!gunPickup.taken && dist(hero.x, hero.y, gunPickup.x, gunPickup.y) < 35) {
+    gunPickup.taken = true;
+    hero.inventory.gun = true;
+    hudItem.textContent = "Item: Laser sight";
+    saveHero();
+  }
 }
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawBackground();
+  drawGunPickup();
   drawBiohazards();
   drawZombies();
   drawHero();
-  drawFlashlight();
+  if (hero.inventory.gun) {
+    drawLaser();
+  } else {
+    drawFlashlight();
+  }
 }
 
 function drawBackground() {
-  // dark asphalt
   const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
   g.addColorStop(0, "#0f172a");
   g.addColorStop(1, "#020617");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // road lines
   ctx.strokeStyle = "rgba(148,163,184,0.08)";
   ctx.lineWidth = 2;
   for (let i = 80; i < canvas.height; i += 90) {
@@ -251,26 +292,33 @@ function drawBackground() {
     ctx.stroke();
   }
 
-  // perimeter building
   ctx.fillStyle = "#0f172a";
   ctx.fillRect(canvas.width - 180, 80, 120, 140);
   ctx.strokeStyle = "rgba(248,113,113,0.1)";
   ctx.strokeRect(canvas.width - 180, 80, 120, 140);
 }
 
+function drawGunPickup() {
+  if (gunPickup.taken) return;
+  const { x, y } = gunPickup;
+  ctx.fillStyle = "#1f2937";
+  ctx.fillRect(x - 16, y - 10, 32, 20);
+  ctx.strokeStyle = "rgba(202,252,255,0.3)";
+  ctx.strokeRect(x - 16, y - 10, 32, 20);
+
+  // glowing pistol icon
+  ctx.fillStyle = "#f97316";
+  ctx.fillRect(x - 6, y - 2, 12, 4);
+  ctx.fillRect(x + 3, y - 6, 3, 4);
+}
+
 function drawBiohazards() {
-  // glowing sign on right building
   drawBiohazard(canvas.width - 120, 150, 32, "rgba(252, 76, 2, 0.9)");
-
-  // on ground in front
   drawBiohazard(240, 420, 46, "rgba(252, 76, 2, 0.85)");
-
-  // fence sign
   drawBiohazard(130, 160, 26, "rgba(252, 76, 2, 0.85)");
 }
 
 function drawBiohazard(x, y, r, color) {
-  // glow
   const g = ctx.createRadialGradient(x, y, 4, x, y, r * 2.2);
   g.addColorStop(0, color);
   g.addColorStop(1, "rgba(252,76,2,0)");
@@ -303,22 +351,15 @@ function drawZombies() {
 }
 
 function drawZombie(x, y) {
-  // body
   ctx.fillStyle = "#14532d";
   ctx.fillRect(x - 12, y - 10, 24, 32);
-
-  // arms
   ctx.fillStyle = "#1c7c45";
   ctx.fillRect(x - 20, y - 6, 8, 20);
   ctx.fillRect(x + 12, y - 6, 8, 20);
-
-  // head
   ctx.fillStyle = "#166534";
   ctx.beginPath();
   ctx.arc(x, y - 16, 10, 0, Math.PI * 2);
   ctx.fill();
-
-  // red eyes
   ctx.fillStyle = "#ef4444";
   ctx.fillRect(x - 4, y - 18, 2, 2);
   ctx.fillRect(x + 2, y - 18, 2, 2);
@@ -328,14 +369,30 @@ function drawHero() {
   const x = hero.x;
   const y = hero.y;
 
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(x, y + 14, 16, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // backpack
+  ctx.fillStyle = "#7f1d1d";
+  ctx.fillRect(x - 6, y - 4, 12, 10);
+  ctx.fillStyle = "#b91c1c";
+  ctx.fillRect(x - 4, y - 2, 8, 3);
+
   // legs
   ctx.fillStyle = hero.pants;
   ctx.fillRect(x - 6, y + 4, 5, 14);
   ctx.fillRect(x + 1, y + 4, 5, 14);
+  // boots
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(x - 6, y + 16, 6, 3);
+  ctx.fillRect(x + 1, y + 16, 6, 3);
 
-  // torso
+  // torso/armor
   ctx.fillStyle = hero.jacket;
-  ctx.fillRect(x - 9, y - 6, 18, 18);
+  ctx.fillRect(x - 10, y - 8, 20, 18);
 
   // head
   ctx.fillStyle = hero.skin;
@@ -366,28 +423,37 @@ function drawHero() {
     ctx.fillRect(x - 7, y - 19, 14, 3);
   }
 
-  // pistol hand
+  // right arm holding tool/gun forward
+  ctx.save();
+  ctx.translate(x, y - 2);
+  ctx.rotate(hero.angle);
   ctx.fillStyle = hero.jacket;
-  ctx.fillRect(x + 6, y - 2, 9, 3);
-  // gun tip
-  ctx.fillStyle = "#0f172a";
-  ctx.fillRect(x + 14, y - 3, 5, 5);
+  ctx.fillRect(4, -2, 10, 4); // arm
+
+  // tool/gun rendered in flashlight/laser fn
+  ctx.restore();
+
+  // left arm down
+  ctx.fillStyle = hero.jacket;
+  ctx.fillRect(x - 12, y - 3, 4, 10);
 }
 
 function drawFlashlight() {
-  const beamLen = 260;
-  const beamWidth = 75;
-  const angle = hero.angle;
+  // flashlight at hero hand
+  const handX = hero.x + Math.cos(hero.angle) * 14;
+  const handY = hero.y - 2 + Math.sin(hero.angle) * 14;
 
   ctx.save();
-  ctx.translate(hero.x + 16, hero.y - 2);
-  ctx.rotate(angle);
+  ctx.translate(handX, handY);
+  ctx.rotate(hero.angle);
 
+  const beamLen = 260;
+  const beamWidth = 80;
   const grad = ctx.createRadialGradient(0, 0, 2, 0, 0, beamLen);
   grad.addColorStop(0, "rgba(202,252,255,0.8)");
   grad.addColorStop(1, "rgba(202,252,255,0)");
-
   ctx.fillStyle = grad;
+
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.lineTo(beamLen, -beamWidth);
@@ -395,5 +461,32 @@ function drawFlashlight() {
   ctx.closePath();
   ctx.fill();
 
+  // flashlight body
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, -2, 10, 4);
+
+  ctx.restore();
+}
+
+function drawLaser() {
+  const handX = hero.x + Math.cos(hero.angle) * 14;
+  const handY = hero.y - 2 + Math.sin(hero.angle) * 14;
+
+  ctx.save();
+  ctx.lineWidth = 3;
+  const grad = ctx.createLinearGradient(handX, handY, handX + Math.cos(hero.angle)*280, handY + Math.sin(hero.angle)*280);
+  grad.addColorStop(0, "rgba(252,76,2,1)");
+  grad.addColorStop(1, "rgba(252,76,2,0)");
+  ctx.strokeStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(handX, handY);
+  ctx.lineTo(handX + Math.cos(hero.angle)*280, handY + Math.sin(hero.angle)*280);
+  ctx.stroke();
+
+  // gun body
+  ctx.translate(handX, handY);
+  ctx.rotate(hero.angle);
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, -3, 14, 6);
   ctx.restore();
 }
