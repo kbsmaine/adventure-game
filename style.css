@@ -1,6 +1,6 @@
 :root {
   --bg: #020617;
-  --panel: rgba(2, 6, 23, 0.8);
+  --panel: rgba(2, 6, 23, 0.85);
   --text: #e2e8f0;
   --accent: #f97316;
   --muted: #94a3b8;
@@ -123,6 +123,7 @@ body {
   width: 100vw;
   height: 100vh;
   display: block;
+  background: #000;
 }
 
 #hud {
@@ -166,10 +167,6 @@ body {
 
 #death-screen.hidden {
   display: none;
-}
-
-#death-screen h2 {
-  margin: 0;
 }
 
 #retry-btn {
