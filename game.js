@@ -1,5 +1,5 @@
 // game.js
-// Quarantine Graveyard with auto collision from map image (brightness-based)
+// Quarantine Graveyard – auto collisions from map, with debug
 
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
@@ -19,7 +19,7 @@ const interactBox = document.getElementById("interact-box");
 const deathScreen = document.getElementById("death-screen");
 const retryBtn = document.getElementById("retry-btn");
 
-let DEBUG_COLLISIONS = true; // Press "L" to toggle
+let DEBUG_COLLISIONS = true; // press L to toggle
 
 const bgImage = new Image();
 bgImage.src = "map.png";
@@ -54,6 +54,7 @@ const keys = {
   mouseDown: false
 };
 
+// -------------------- init / resize --------------------
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -67,37 +68,45 @@ bgImage.onload = () => {
   buildCollisionMapFromImage(bgImage);
 };
 
-// ===================================
-// CHARACTER CREATION
-// ===================================
+// -------------------- character select --------------------
 function renderCharacterGrid() {
   charGrid.innerHTML = "";
   survivorPresets.forEach((p, i) => {
     const card = document.createElement("div");
     card.className = "character-card" + (i === 0 ? " selected" : "");
     if (i === 0) selectedCharId = p.id;
+
     const sw = document.createElement("div");
     sw.className = "swatch";
     sw.style.background = p.jacket;
+
     const title = document.createElement("div");
     title.className = "card-title";
     title.textContent = p.name;
+
     const role = document.createElement("div");
     role.className = "card-role";
     role.textContent = p.role;
+
     card.appendChild(sw);
     card.appendChild(title);
     card.appendChild(role);
+
     card.addEventListener("click", () => {
       selectedCharId = p.id;
       document.querySelectorAll(".character-card").forEach(el => el.classList.remove("selected"));
       card.classList.add("selected");
     });
+
     charGrid.appendChild(card);
   });
 }
 renderCharacterGrid();
 
+// show character screen on first load
+charScreen.classList.add("active");
+
+// -------------------- start game --------------------
 startBtn.addEventListener("click", () => {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
@@ -120,6 +129,12 @@ startBtn.addEventListener("click", () => {
     maxHp: 100
   };
   level = 1;
+  hudName.textContent = hero.name;
+  hudClass.textContent = hero.class;
+  hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
+  hudLevel.textContent = "Zone: " + level;
+  hudHp.textContent = "HP: " + hero.hp;
+
   charScreen.classList.remove("active");
   gameScreen.classList.add("active");
   placeDoor();
@@ -135,13 +150,11 @@ retryBtn.addEventListener("click", () => {
   requestAnimationFrame(gameLoop);
 });
 
-// ===================================
-// CONTROLS
-// ===================================
+// -------------------- input --------------------
 window.addEventListener("keydown", e => {
   if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
-  if (e.key === "l" || e.key === "L") DEBUG_COLLISIONS = !DEBUG_COLLISIONS;
   if (e.key === "e" || e.key === "E") tryInteract();
+  if (e.key === "l" || e.key === "L") DEBUG_COLLISIONS = !DEBUG_COLLISIONS;
 });
 window.addEventListener("keyup", e => {
   if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
@@ -151,12 +164,12 @@ canvas.addEventListener("mouseup", () => keys.mouseDown = false);
 canvas.addEventListener("mousemove", e => {
   if (!hero) return;
   const rect = canvas.getBoundingClientRect();
-  hero.angle = Math.atan2(e.clientY - rect.top - hero.y, e.clientX - rect.left - hero.x);
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  hero.angle = Math.atan2(my - hero.y, mx - hero.x);
 });
 
-// ===================================
-// COLLISION BUILDER
-// ===================================
+// -------------------- collision from image --------------------
 function buildCollisionMapFromImage(img) {
   const off = document.createElement("canvas");
   off.width = img.width;
@@ -165,7 +178,7 @@ function buildCollisionMapFromImage(img) {
   octx.drawImage(img, 0, 0);
   const data = octx.getImageData(0, 0, img.width, img.height).data;
 
-  const step = 32;
+  const step = 32; // bigger step = fewer boxes
   const scaleX = canvas.width / img.width;
   const scaleY = canvas.height / img.height;
   const rects = [];
@@ -173,37 +186,56 @@ function buildCollisionMapFromImage(img) {
   for (let y = 0; y < img.height; y += step) {
     for (let x = 0; x < img.width; x += step) {
       const idx = (y * img.width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const a = data[idx + 3];
+      if (a < 10) continue;
+
       const brightness = (r + g + b) / 3;
-      if (a < 10) continue; // transparent
-      const isWalkable = brightness > 90 && brightness < 190; // mid-gray = path
+      // paths in your map are mid brightness; buildings/trees are darker or very detailed
+      const isWalkable = brightness > 90 && brightness < 190;
+
       if (!isWalkable) {
-        rects.push({ x: x * scaleX, y: y * scaleY, w: step * scaleX, h: step * scaleY });
+        rects.push({
+          x: x * scaleX,
+          y: y * scaleY,
+          w: step * scaleX,
+          h: step * scaleY
+        });
       }
     }
   }
 
-  // always open spawn zone at bottom
+  // force an open area at bottom center so spawn isn't blocked
   const openW = canvas.width * 0.22;
   const openH = canvas.height * 0.25;
   const openX = canvas.width / 2 - openW / 2;
   const openY = canvas.height - openH;
+
   collisionRects = rects.filter(r => {
-    const inOpen = r.x < openX + openW && r.x + r.w > openX && r.y < openY + openH && r.y + r.h > openY;
+    const inOpen =
+      r.x < openX + openW &&
+      r.x + r.w > openX &&
+      r.y < openY + openH &&
+      r.y + r.h > openY;
     return !inOpen;
   });
 }
 
-// ===================================
-// GAME LOGIC
-// ===================================
+// -------------------- game logic --------------------
 function placeDoor() {
-  door = { x: canvas.width / 2 - 40, y: canvas.height - 120, active: false };
+  door = {
+    x: canvas.width / 2 - 40,
+    y: canvas.height - 120,
+    active: false
+  };
 }
 
 function spawnZombies() {
   zombies = [];
-  for (let i = 0; i < 5 + level * 2; i++) {
+  const count = 5 + level * 2;
+  for (let i = 0; i < count; i++) {
     zombies.push({
       x: canvas.width * (0.2 + Math.random() * 0.6),
       y: canvas.height * (0.15 + Math.random() * 0.6),
@@ -214,10 +246,11 @@ function spawnZombies() {
     });
   }
   bullets = [];
-  if (hero && hero.currentWeapon === "flashlight")
+  if (hero && hero.currentWeapon === "flashlight") {
     pendingPickup = { x: hero.x + 80, y: hero.y - 40 };
-  else
+  } else {
     pendingPickup = null;
+  }
 }
 
 function gameLoop(t) {
@@ -248,31 +281,56 @@ function update(t) {
 
   bullets.forEach(b => {
     zombies.forEach(z => {
-      if (!z.dying && Math.hypot(b.x - z.x, b.y - z.y) < 20) {
-        z.dying = true; z.dieTimer = 30; b.life = 0;
+      if (!z.dying) {
+        const d = Math.hypot(b.x - z.x, b.y - z.y);
+        if (d < 20) {
+          z.dying = true;
+          z.dieTimer = 30;
+          b.life = 0;
+        }
       }
     });
   });
 
   zombies.forEach(z => {
-    if (z.dying) z.dieTimer--;
-    else {
+    if (z.dying) {
+      z.dieTimer--;
+    } else {
       const ang = Math.atan2(hero.y - z.y, hero.x - z.x);
       z.x += Math.cos(ang) * z.speed;
       z.y += Math.sin(ang) * z.speed;
-      if (Math.hypot(hero.x - z.x, hero.y - z.y) < 22) {
+      const d = Math.hypot(hero.x - z.x, hero.y - z.y);
+      if (d < 22) {
         hero.hp -= 0.35;
-        if (hero.hp <= 0) { hero.hp = 0; gameOver = true; deathScreen.classList.remove("hidden"); }
+        if (hero.hp <= 0) {
+          hero.hp = 0;
+          gameOver = true;
+          deathScreen.classList.remove("hidden");
+        }
       }
     }
   });
 
   zombies = zombies.filter(z => !z.dying || z.dieTimer > 0);
-  if (zombies.filter(z => !z.dying).length === 0) door.active = true;
+
+  if (zombies.filter(z => !z.dying).length === 0) {
+    door.active = true;
+  }
+
+  const nearPickup = pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40;
+  const nearDoor = door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50;
+  if (nearPickup || nearDoor) {
+    interactBox.classList.remove("hidden");
+  } else {
+    interactBox.classList.add("hidden");
+  }
+
+  hudHp.textContent = "HP: " + Math.ceil(hero.hp);
 }
 
 function moveHeroWithCollisions(dx, dy) {
   const half = 14;
+
   const newX = hero.x + dx;
   const xBlocked = collisionRects.some(r =>
     pointInRect(newX - half, hero.y, r) ||
@@ -294,7 +352,8 @@ function pointInRect(px, py, r) {
 
 function tryFire(t) {
   const weap = weapons[hero.currentWeapon];
-  if (!weap.canFire || (t - (hero.lastFire || 0)) < weap.fireRate) return;
+  if (!weap.canFire) return;
+  if (t - (hero.lastFire || 0) < weap.fireRate) return;
   hero.lastFire = t;
   bullets.push({
     x: hero.x + Math.cos(hero.angle) * 20,
@@ -308,51 +367,74 @@ function tryFire(t) {
 
 function tryInteract() {
   if (pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40) {
-    hero.currentWeapon = "pistol"; pendingPickup = null;
+    hero.currentWeapon = "pistol";
+    pendingPickup = null;
     hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
     return;
   }
   if (door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50) {
-    level++; spawnZombies(); door.active = false;
+    level++;
+    hudLevel.textContent = "Zone: " + level;
+    spawnZombies();
+    door.active = false;
   }
 }
 
-// ===================================
-// DRAWING
-// ===================================
+// -------------------- draw --------------------
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (bgImage.complete) ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+
+  if (bgImage.complete) {
+    ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
   if (DEBUG_COLLISIONS) drawCollisionDebug();
-  drawDoor(); drawZombies(); drawBullets(); drawHero(); drawLight(); drawPickup();
+
+  drawDoor();
+  drawZombies();
+  drawBullets();
+  drawHero();
+  drawLight();
+  drawPickup();
 }
 
 function drawCollisionDebug() {
   ctx.save();
   ctx.strokeStyle = "rgba(255,0,0,0.5)";
   ctx.fillStyle = "rgba(255,0,0,0.15)";
-  collisionRects.forEach(r => { ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeRect(r.x, r.y, r.w, r.h); });
+  collisionRects.forEach(r => {
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+  });
   ctx.restore();
 }
 
 function drawDoor() {
-  ctx.fillStyle = door.active ? "rgba(34,197,94,0.9)" : "rgba(15,23,42,0.8)";
-  ctx.fillRect(door.x, door.y, 80, 60);
+  ctx.fillStyle = door && door.active ? "rgba(34,197,94,0.9)" : "rgba(15,23,42,0.8)";
+  if (door) ctx.fillRect(door.x, door.y, 80, 60);
 }
 
 function drawZombies() {
   zombies.forEach(z => {
     if (z.dying) {
-      const p = z.dieTimer / 30;
-      ctx.save(); ctx.globalAlpha = p;
+      const prog = z.dieTimer / 30;
+      ctx.save();
+      ctx.globalAlpha = prog;
       ctx.fillStyle = "#ef4444";
-      ctx.beginPath(); ctx.arc(z.x, z.y, 20 * p, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(z.x, z.y - 8, 20 * prog, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     } else {
       ctx.fillStyle = "#14532d";
       ctx.fillRect(z.x - 12, z.y - 10, 24, 32);
       ctx.fillStyle = "#166534";
-      ctx.beginPath(); ctx.arc(z.x, z.y - 16, 10, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(z.x, z.y - 16, 10, 0, Math.PI * 2);
+      ctx.fill();
     }
   });
 }
@@ -361,43 +443,70 @@ function drawBullets() {
   ctx.strokeStyle = "rgba(252,252,252,0.7)";
   ctx.lineWidth = 2;
   bullets.forEach(b => {
-    ctx.beginPath(); ctx.moveTo(b.x, b.y);
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
     ctx.lineTo(b.x - Math.cos(b.angle) * 6, b.y - Math.sin(b.angle) * 6);
     ctx.stroke();
   });
 }
 
 function drawHero() {
-  const x = hero.x, y = hero.y, bob = Math.sin(hero.walkTime) * 1.5;
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.beginPath(); ctx.ellipse(x, y + 16, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = hero.pants; ctx.fillRect(x - 6, y + 4, 5, 14); ctx.fillRect(x + 1, y + 4, 5, 14);
-  ctx.fillStyle = hero.jacket; ctx.fillRect(x - 10, y - 8 + bob, 20, 18);
-  ctx.fillStyle = hero.skin; ctx.beginPath(); ctx.arc(x, y - 16 + bob, 8, 0, Math.PI * 2); ctx.fill();
+  const x = hero.x;
+  const y = hero.y;
+  const bob = Math.sin(hero.walkTime) * 1.5;
+
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(x, y + 16, 16, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = hero.pants;
+  ctx.fillRect(x - 6, y + 4, 5, 14);
+  ctx.fillRect(x + 1, y + 4, 5, 14);
+
+  ctx.fillStyle = hero.jacket;
+  ctx.fillRect(x - 10, y - 8 + bob, 20, 18);
+
+  ctx.fillStyle = hero.skin;
+  ctx.beginPath();
+  ctx.arc(x, y - 16 + bob, 8, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawLight() {
   if (hero.currentWeapon === "flashlight") {
     const handX = hero.x + Math.cos(hero.angle) * 14;
     const handY = hero.y + Math.sin(hero.angle) * 14;
-    ctx.save(); ctx.translate(handX, handY); ctx.rotate(hero.angle);
+    ctx.save();
+    ctx.translate(handX, handY);
+    ctx.rotate(hero.angle);
     const grad = ctx.createRadialGradient(0, 0, 2, 0, 0, 320);
     grad.addColorStop(0, "rgba(202,252,255,0.9)");
     grad.addColorStop(1, "rgba(202,252,255,0)");
     ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(320, -90); ctx.lineTo(320, 90); ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(320, -90);
+    ctx.lineTo(320, 90);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   } else {
     const handX = hero.x + Math.cos(hero.angle) * 14;
     const handY = hero.y + Math.sin(hero.angle) * 14;
     const endX = handX + Math.cos(hero.angle) * 360;
     const endY = handY + Math.sin(hero.angle) * 360;
-    ctx.save(); ctx.lineWidth = 3;
+    ctx.save();
+    ctx.lineWidth = 3;
     const grad = ctx.createLinearGradient(handX, handY, endX, endY);
     grad.addColorStop(0, "rgba(252,76,2,1)");
     grad.addColorStop(1, "rgba(252,76,2,0)");
-    ctx.strokeStyle = grad; ctx.beginPath();
-    ctx.moveTo(handX, handY); ctx.lineTo(endX, endY); ctx.stroke(); ctx.restore();
+    ctx.strokeStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(handX, handY);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.restore();
   }
 }
 
