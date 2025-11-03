@@ -1,5 +1,4 @@
-// game.js
-// start at x:1123.3, y:821.4
+// game.js — full version with exit at (307, 102)
 
 // ===== DOM refs =====
 const charScreen = document.getElementById("char-screen");
@@ -20,12 +19,12 @@ const interactBox = document.getElementById("interact-box");
 const deathScreen = document.getElementById("death-screen");
 const retryBtn = document.getElementById("retry-btn");
 
-// ===== debug / flags =====
-let DEBUG_COLLISIONS = true; // L
-let coordMode = false;       // C
-let EDIT_COLLISIONS = false; // B
+// ===== flags =====
+let DEBUG_COLLISIONS = true;
+let coordMode = false;
+let EDIT_COLLISIONS = false;
 let isPaused = false;
-let GHOST_MODE = false;      // walk through walls
+let GHOST_MODE = false;
 
 // ===== editor vars =====
 let lastMousePos = null;
@@ -49,11 +48,12 @@ let door = null;
 let gameOver = false;
 let pendingPickup = null;
 
-// hardcoded spawn you wanted
+// hardcoded spawn you wanted earlier
 let savedSpawn = { x: 1123.3, y: 821.4 };
+// weapon spawn points you can add from pause menu
 let weaponSpawns = [];
 
-// ===== data =====
+// ===== character presets =====
 const survivorPresets = [
   { id: "operator", name: "Zone Operator", role: "Armored", body: "#1f2937", jacket: "#f97316", pants: "#0f172a", skin: "#fef3c7", gear: "helmet", class: "operator" },
   { id: "scout", name: "Tunnel Scout", role: "Light", body: "#0f172a", jacket: "#38bdf8", pants: "#020617", skin: "#fee2e2", gear: "hood", class: "scout" },
@@ -66,6 +66,7 @@ const weapons = {
   pistol: { name: "9mm Pistol", canFire: true, fireRate: 280, bulletSpeed: 7, damage: 1, spread: 0 }
 };
 
+// ===== input =====
 const keys = {
   w: false, a: false, s: false, d: false,
   ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
@@ -160,7 +161,7 @@ makePauseBtn("Close", () => togglePause(false));
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  placeDoor();
+  placeDoor(); // uses our hardcoded coords
   buildCollisionMapFromImage();
 }
 window.addEventListener("resize", resizeCanvas);
@@ -214,7 +215,6 @@ function startGame() {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
 
-  // use your hardcoded spawn
   const spawnX = savedSpawn ? savedSpawn.x : canvas.width / 2;
   const spawnY = savedSpawn ? savedSpawn.y : canvas.height - 200;
 
@@ -258,7 +258,6 @@ retryBtn.addEventListener("click", () => {
   hero.hp = hero.maxHp;
   spawnZombies();
   isPaused = false;
-  requestAnimationFrame(gameLoop);
 });
 
 // ===== pause helpers =====
@@ -267,7 +266,7 @@ function togglePause(state) {
   pauseOverlay.style.display = state ? "flex" : "none";
 }
 
-// ===== input =====
+// ===== input handlers =====
 window.addEventListener("keydown", e => {
   if (e.key === "Escape") {
     togglePause(!isPaused);
@@ -344,10 +343,10 @@ canvas.addEventListener("contextmenu", e => {
   if (EDIT_COLLISIONS) e.preventDefault();
 });
 
-// ===== collisions (your list) =====
+// ===== collisions (your big list) =====
 function buildCollisionMapFromImage() {
   const compiled = [];
-  // ---- your logged boxes ----
+  // your recorded collisionRects:
   compiled.push({ x: 755, y: 431, w: 379, h: 111 });
   compiled.push({ x: 887, y: 213, w: 38, h: 23 });
   compiled.push({ x: 926, y: 211, w: 42, h: 13 });
@@ -487,15 +486,16 @@ function buildCollisionMapFromImage() {
   compiled.push({ x: 1847, y: 337, w: 23, h: 266 });
   compiled.push({ x: 873, y: 693, w: 152, h: 36 });
   compiled.push({ x: 881, y: 725, w: 140, h: 33 });
-  // -------------------------
+
   collisionRects = compiled;
 }
 
-// ===== game logic =====
+// ===== door — moved to (307, 102) =====
 function placeDoor() {
-  door = { x: canvas.width / 2 - 40, y: canvas.height - 120, active: false };
+  door = { x: 307, y: 102, active: false };
 }
 
+// ===== game logic =====
 function spawnZombies() {
   zombies = [];
   const count = 5 + level * 2;
@@ -523,9 +523,7 @@ function spawnZombies() {
 }
 
 function gameLoop(t) {
-  if (!isPaused && !gameOver) {
-    update(t);
-  }
+  if (!isPaused && !gameOver) update(t);
   draw();
   requestAnimationFrame(gameLoop);
 }
@@ -542,6 +540,7 @@ function update(t) {
 
   if (keys.mouseDown) tryFire(t);
 
+  // bullets
   bullets = bullets.filter(b => {
     b.x += Math.cos(b.angle) * b.speed;
     b.y += Math.sin(b.angle) * b.speed;
@@ -549,6 +548,7 @@ function update(t) {
     return b.life > 0;
   });
 
+  // bullet vs zombies
   bullets.forEach(b => {
     zombies.forEach(z => {
       if (!z.dying) {
@@ -562,6 +562,7 @@ function update(t) {
     });
   });
 
+  // zombies move
   zombies.forEach(z => {
     if (z.dying) {
       z.dieTimer--;
@@ -582,10 +583,12 @@ function update(t) {
 
   zombies = zombies.filter(z => !z.dying || z.dieTimer > 0);
 
+  // open door when all zombies cleared
   if (zombies.filter(z => !z.dying).length === 0) {
     door.active = true;
   }
 
+  // show interact prompt
   const nearPickup = pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40;
   const nearDoor = door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50;
   if (nearPickup || nearDoor) interactBox.classList.remove("hidden");
@@ -594,7 +597,7 @@ function update(t) {
   hudHp.textContent = "HP: " + Math.ceil(hero.hp);
 }
 
-// ===== collisions / movement =====
+// ===== movement / collisions =====
 function pointInRect(px, py, r) {
   return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 }
@@ -604,15 +607,14 @@ function isBlockedPoint(px, py) {
     paintedColliders.some(r => pointInRect(px, py, r))
   );
 }
-
 function moveHeroWithCollisions(dx, dy) {
   if (GHOST_MODE) {
     hero.x += dx;
     hero.y += dy;
     return;
   }
-
   const half = 14;
+
   const newX = hero.x + dx;
   const xBlocked =
     isBlockedPoint(newX - half, hero.y) ||
@@ -630,6 +632,7 @@ function moveHeroWithCollisions(dx, dy) {
   if (!yBlocked) hero.y = newY;
 }
 
+// ===== interact / firing =====
 function tryFire(t) {
   const weap = weapons[hero.currentWeapon];
   if (!weap.canFire) return;
