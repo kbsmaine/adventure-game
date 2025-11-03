@@ -1,4 +1,4 @@
-// character creation and game with localStorage for persistence
+// character creation and game with localStorage for persistence + better drawn character
 
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
@@ -26,7 +26,9 @@ const characterPresets = [
     desc: "Quick survivor",
     bodyColor: "#f97316",
     trimColor: "#fde68a",
-    class: "scavenger"
+    faceColor: "#fed7aa",
+    class: "scavenger",
+    gear: "bandana"
   },
   {
     id: "urban-soldier",
@@ -34,7 +36,9 @@ const characterPresets = [
     desc: "Armored infantry",
     bodyColor: "#0ea5e9",
     trimColor: "#e2e8f0",
-    class: "soldier"
+    faceColor: "#e2e8f0",
+    class: "soldier",
+    gear: "helmet"
   },
   {
     id: "field-medic",
@@ -42,7 +46,9 @@ const characterPresets = [
     desc: "Heals the squad",
     bodyColor: "#22c55e",
     trimColor: "#fef9c3",
-    class: "medic"
+    faceColor: "#ffe4e6",
+    class: "medic",
+    gear: "cap"
   },
   {
     id: "wasteland-hunter",
@@ -50,7 +56,9 @@ const characterPresets = [
     desc: "Ranged survivor",
     bodyColor: "#eab308",
     trimColor: "#fef3c7",
-    class: "ranger"
+    faceColor: "#fde68a",
+    class: "ranger",
+    gear: "goggles"
   }
 ];
 
@@ -116,8 +124,6 @@ function renderCharacterCards() {
       selectedCharId = ch.id;
       document.querySelectorAll(".character-card").forEach((el) => el.classList.remove("selected"));
       card.classList.add("selected");
-
-      // auto adjust class dropdown to their class
       heroClassSelect.value = ch.class;
     });
 
@@ -146,7 +152,6 @@ renderCharacterCards();
     gameScreen.classList.add("active");
     requestAnimationFrame(gameLoop);
   } else {
-    // show character screen
     charScreen.classList.add("active");
   }
 })();
@@ -162,14 +167,15 @@ startBtn.addEventListener("click", () => {
     presetId: preset.id,
     bodyColor: preset.bodyColor,
     trimColor: preset.trimColor,
+    faceColor: preset.faceColor,
+    gear: preset.gear,
     x: 64,
     y: 64,
     speed: 2.2,
     width: 26,
-    height: 26,
+    height: 36, // a bit taller to draw a body
   };
 
-  // save to localStorage
   localStorage.setItem(
     "miniAdventureHero",
     JSON.stringify({
@@ -178,6 +184,8 @@ startBtn.addEventListener("click", () => {
       presetId: hero.presetId,
       bodyColor: hero.bodyColor,
       trimColor: hero.trimColor,
+      faceColor: hero.faceColor,
+      gear: hero.gear,
     })
   );
 
@@ -325,23 +333,61 @@ function draw() {
     }
   }
 
-  // draw hero using preset colors
+  drawHero();
+}
+
+function drawHero() {
+  const x = hero.x;
+  const y = hero.y;
+
+  // body
   ctx.fillStyle = hero.bodyColor || "#38bdf8";
+  ctx.fillRect(x - 10, y - 14, 20, 22); // torso
+
+  // legs
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(x - 10, y + 8, 8, 12);
+  ctx.fillRect(x + 2, y + 8, 8, 12);
+
+  // head
+  ctx.fillStyle = hero.faceColor || "#ffe4c4";
   ctx.beginPath();
-  ctx.arc(hero.x, hero.y, hero.width / 2, 0, Math.PI * 2);
+  ctx.arc(x, y - 22, 8, 0, Math.PI * 2);
   ctx.fill();
 
-  // simple trim ring
-  if (hero.trimColor) {
-    ctx.strokeStyle = hero.trimColor;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(hero.x, hero.y, hero.width / 2 + 1, 0, Math.PI * 2);
-    ctx.stroke();
+  // eyes
+  ctx.fillStyle = "#020617";
+  ctx.fillRect(x - 4, y - 24, 2, 2);
+  ctx.fillRect(x + 2, y - 24, 2, 2);
+
+  // gear
+  if (hero.gear === "helmet") {
+    ctx.fillStyle = hero.trimColor || "#e2e8f0";
+    ctx.fillRect(x - 9, y - 30, 18, 6);
+    ctx.fillRect(x - 9, y - 30, 3, 10);
+    ctx.fillRect(x + 6, y - 30, 3, 10);
+  } else if (hero.gear === "bandana") {
+    ctx.fillStyle = hero.trimColor || "#ef4444";
+    ctx.fillRect(x - 8, y - 26, 16, 4);
+  } else if (hero.gear === "cap") {
+    ctx.fillStyle = hero.trimColor || "#fef9c3";
+    ctx.fillRect(x - 8, y - 29, 16, 5);
+    ctx.fillRect(x, y - 29, 8, 3);
+  } else if (hero.gear === "goggles") {
+    ctx.fillStyle = hero.trimColor || "#fef3c7";
+    ctx.fillRect(x - 7, y - 26, 14, 4);
   }
 
+  // trim/armor
+  if (hero.trimColor) {
+    ctx.strokeStyle = hero.trimColor;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x - 10, y - 14, 20, 22);
+  }
+
+  // name
   ctx.fillStyle = "white";
   ctx.font = "12px system-ui";
   ctx.textAlign = "center";
-  ctx.fillText(hero.name, hero.x, hero.y - 20);
+  ctx.fillText(hero.name, x, y - 36);
 }
