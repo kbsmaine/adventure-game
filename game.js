@@ -1,5 +1,5 @@
 // game.js
-// Quarantine Graveyard – auto collisions + manual obstacles + coord debug
+// Auto collisions + manual obstacles + collision editor (B) + coord mode (C)
 
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
@@ -19,8 +19,9 @@ const interactBox = document.getElementById("interact-box");
 const deathScreen = document.getElementById("death-screen");
 const retryBtn = document.getElementById("retry-btn");
 
-let DEBUG_COLLISIONS = true; // press L
-let coordMode = false;       // press C
+let DEBUG_COLLISIONS = true; // L
+let coordMode = false;       // C
+let EDIT_COLLISIONS = false; // B
 
 const bgImage = new Image();
 bgImage.src = "map.png";
@@ -34,7 +35,9 @@ let door = null;
 let gameOver = false;
 let pendingPickup = null;
 
-let collisionRects = [];
+let collisionRects = [];     // auto + manual
+let paintedColliders = [];   // drawn in editor mode
+let dragStart = null;        // for editor drag
 
 const survivorPresets = [
   { id: "operator", name: "Zone Operator", role: "Armored", body: "#1f2937", jacket: "#f97316", pants: "#0f172a", skin: "#fef3c7", gear: "helmet", class: "operator" },
@@ -54,7 +57,7 @@ const keys = {
   mouseDown: false
 };
 
-// create coord overlay DOM
+// coord overlay
 const coordOverlay = document.createElement("div");
 coordOverlay.style.position = "fixed";
 coordOverlay.style.bottom = "8px";
@@ -71,7 +74,7 @@ coordOverlay.style.display = "none";
 coordOverlay.textContent = "coord mode";
 document.body.appendChild(coordOverlay);
 
-// ------------------- init / resize -------------------
+// ------------- init / resize -------------
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -88,7 +91,7 @@ bgImage.onload = () => {
 // show char screen
 charScreen.classList.add("active");
 
-// ------------------- character screen -------------------
+// ------------- character select -------------
 function renderCharacterGrid() {
   charGrid.innerHTML = "";
   survivorPresets.forEach((p, i) => {
@@ -123,7 +126,7 @@ function renderCharacterGrid() {
 }
 renderCharacterGrid();
 
-// ------------------- start game -------------------
+// ------------- start game -------------
 startBtn.addEventListener("click", () => {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
@@ -169,7 +172,7 @@ retryBtn.addEventListener("click", () => {
   requestAnimationFrame(gameLoop);
 });
 
-// ------------------- input -------------------
+// ------------- input -------------
 window.addEventListener("keydown", e => {
   if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
   if (e.key === "e" || e.key === "E") tryInteract();
@@ -177,14 +180,52 @@ window.addEventListener("keydown", e => {
   if (e.key === "c" || e.key === "C") {
     coordMode = !coordMode;
     coordOverlay.style.display = coordMode ? "block" : "none";
-    console.log(coordMode ? "📍 Coordinate mode ON (click canvas)" : "Coordinate mode OFF");
+    console.log(coordMode ? "📍 coord mode ON" : "coord mode OFF");
+  }
+  if (e.key === "b" || e.key === "B") {
+    EDIT_COLLISIONS = !EDIT_COLLISIONS;
+    console.log(EDIT_COLLISIONS ? "🧱 collision editor ON (drag on canvas)" : "collision editor OFF");
   }
 });
+
 window.addEventListener("keyup", e => {
   if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
 });
-canvas.addEventListener("mousedown", () => keys.mouseDown = true);
-canvas.addEventListener("mouseup", () => keys.mouseDown = false);
+
+canvas.addEventListener("mousedown", e => {
+  // editor drag
+  if (EDIT_COLLISIONS) {
+    const rect = canvas.getBoundingClientRect();
+    dragStart = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+  } else {
+    keys.mouseDown = true;
+  }
+});
+
+canvas.addEventListener("mouseup", e => {
+  if (EDIT_COLLISIONS && dragStart) {
+    const rect = canvas.getBoundingClientRect();
+    const x2 = e.clientX - rect.left;
+    const y2 = e.clientY - rect.top;
+    const x = Math.min(dragStart.x, x2);
+    const y = Math.min(dragStart.y, y2);
+    const w = Math.abs(x2 - dragStart.x);
+    const h = Math.abs(y2 - dragStart.y);
+    dragStart = null;
+
+    // add to temporary colliders so it blocks right away
+    paintedColliders.push({ x, y, w, h });
+
+    // print code for you to paste in buildCollisionMapFromImage
+    console.log(`collisionRects.push({ x: ${Math.round(x)}, y: ${Math.round(y)}, w: ${Math.round(w)}, h: ${Math.round(h)} });`);
+  } else {
+    keys.mouseDown = false;
+  }
+});
+
 canvas.addEventListener("mousemove", e => {
   if (!hero) return;
   const rect = canvas.getBoundingClientRect();
@@ -199,24 +240,7 @@ canvas.addEventListener("mousemove", e => {
   }
 });
 
-// click-to-log coords
-canvas.addEventListener("click", e => {
-  if (!coordMode) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  const rx = (x / canvas.width).toFixed(2);
-  const ry = (y / canvas.height).toFixed(2);
-  console.log(`Clicked at x:${x.toFixed(0)} y:${y.toFixed(0)} | rel x:${rx} y:${ry}`);
-  // small flash
-  ctx.save();
-  ctx.strokeStyle = "lime";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x - 10, y - 10, 20, 20);
-  ctx.restore();
-});
-
-// ------------------- collision from image + manual -------------------
+// ------------- collision from image + manual -------------
 function buildCollisionMapFromImage(img) {
   const off = document.createElement("canvas");
   off.width = img.width;
@@ -238,6 +262,7 @@ function buildCollisionMapFromImage(img) {
       const b = data[idx + 2];
       const a = data[idx + 3];
       if (a < 10) continue;
+
       const brightness = (r + g + b) / 3;
       const isWalkable = brightness > 90 && brightness < 190;
       if (!isWalkable) {
@@ -251,7 +276,7 @@ function buildCollisionMapFromImage(img) {
     }
   }
 
-  // force open bottom center
+  // bottom open zone
   const openW = canvas.width * 0.22;
   const openH = canvas.height * 0.25;
   const openX = canvas.width / 2 - openW / 2;
@@ -266,48 +291,14 @@ function buildCollisionMapFromImage(img) {
     return !inOpen;
   });
 
-  // ----- manual colliders -----
-  // rock 1
-  compiled.push({
-    x: canvas.width * 0.12,
-    y: canvas.height * 0.22,
-    w: 55,
-    h: 55
-  });
+  // sample manual stuff (you can move/remove these)
+  compiled.push({ x: canvas.width * 0.12, y: canvas.height * 0.22, w: 55, h: 55 });
+  compiled.push({ x: canvas.width * 0.72, y: canvas.height * 0.40, w: 60, h: 50 });
+  compiled.push({ x: canvas.width * 0.38, y: canvas.height * 0.58, w: 130, h: 48 });
+  compiled.push({ x: canvas.width * 0.05, y: canvas.height * 0.30, w: canvas.width * 0.26, h: 18 });
+  compiled.push({ x: canvas.width * 0.62, y: canvas.height * 0.26, w: canvas.width * 0.30, h: 18 });
 
-  // rock 2
-  compiled.push({
-    x: canvas.width * 0.72,
-    y: canvas.height * 0.40,
-    w: 60,
-    h: 50
-  });
-
-  // burning car
-  compiled.push({
-    x: canvas.width * 0.38,
-    y: canvas.height * 0.58,
-    w: 130,
-    h: 48
-  });
-
-  // building wall left
-  compiled.push({
-    x: canvas.width * 0.05,
-    y: canvas.height * 0.30,
-    w: canvas.width * 0.26,
-    h: 18
-  });
-
-  // building wall right
-  compiled.push({
-    x: canvas.width * 0.62,
-    y: canvas.height * 0.26,
-    w: canvas.width * 0.30,
-    h: 18
-  });
-
-  // doorway carve-out
+  // doorway
   const doorHole = {
     x: canvas.width * 0.47,
     y: canvas.height * 0.50,
@@ -328,7 +319,7 @@ function rectsOverlap(a, b) {
   );
 }
 
-// ------------------- game logic -------------------
+// ------------- game logic -------------
 function placeDoor() {
   door = { x: canvas.width / 2 - 40, y: canvas.height - 120, active: false };
 }
@@ -369,7 +360,6 @@ function update(t) {
   if (keys.d || keys.ArrowRight) dx += hero.speed;
 
   if (dx !== 0 || dy !== 0) hero.walkTime += 0.12;
-
   moveHeroWithCollisions(dx, dy);
 
   if (keys.mouseDown) tryFire(t);
@@ -429,23 +419,30 @@ function update(t) {
   hudHp.textContent = "HP: " + Math.ceil(hero.hp);
 }
 
+function isBlockedPoint(px, py) {
+  return (
+    collisionRects.some(r => pointInRect(px, py, r)) ||
+    paintedColliders.some(r => pointInRect(px, py, r))
+  );
+}
+
 function moveHeroWithCollisions(dx, dy) {
   const half = 14;
 
-  // X
   const newX = hero.x + dx;
-  const xBlocked = collisionRects.some(r =>
-    pointInRect(newX - half, hero.y, r) ||
-    pointInRect(newX + half, hero.y, r)
-  );
+  const xBlocked =
+    isBlockedPoint(newX - half, hero.y) ||
+    isBlockedPoint(newX + half, hero.y) ||
+    isBlockedPoint(newX, hero.y - half) ||
+    isBlockedPoint(newX, hero.y + half);
   if (!xBlocked) hero.x = newX;
 
-  // Y
   const newY = hero.y + dy;
-  const yBlocked = collisionRects.some(r =>
-    pointInRect(hero.x, newY - half, r) ||
-    pointInRect(hero.x, newY + half, r)
-  );
+  const yBlocked =
+    isBlockedPoint(hero.x, newY - half) ||
+    isBlockedPoint(hero.x, newY + half) ||
+    isBlockedPoint(hero.x - half, newY) ||
+    isBlockedPoint(hero.x + half, newY);
   if (!yBlocked) hero.y = newY;
 }
 
@@ -483,7 +480,7 @@ function tryInteract() {
   }
 }
 
-// ------------------- drawing -------------------
+// ------------- drawing -------------
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -495,13 +492,13 @@ function draw() {
   }
 
   if (DEBUG_COLLISIONS) drawCollisionDebug();
-
   drawDoor();
   drawZombies();
   drawBullets();
   drawHero();
   drawWeaponLight();
   drawPickup();
+  drawPaintedColliders();
 }
 
 function drawCollisionDebug() {
@@ -512,6 +509,22 @@ function drawCollisionDebug() {
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeRect(r.x, r.y, r.w, r.h);
   });
+  ctx.restore();
+}
+
+function drawPaintedColliders() {
+  if (!EDIT_COLLISIONS) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,165,0,0.95)";
+  ctx.fillStyle = "rgba(255,165,0,0.25)";
+  paintedColliders.forEach(r => {
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+  });
+  // live drag preview
+  if (dragStart) {
+    const mx = hero.x; // not needed, leave blank
+  }
   ctx.restore();
 }
 
@@ -559,22 +572,18 @@ function drawHero() {
   const y = hero.y;
   const bob = Math.sin(hero.walkTime) * 1.5;
 
-  // shadow
   ctx.fillStyle = "rgba(0,0,0,0.25)";
   ctx.beginPath();
   ctx.ellipse(x, y + 16, 16, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // legs
   ctx.fillStyle = hero.pants;
   ctx.fillRect(x - 6, y + 4, 5, 14);
   ctx.fillRect(x + 1, y + 4, 5, 14);
 
-  // torso
   ctx.fillStyle = hero.jacket;
   ctx.fillRect(x - 10, y - 8 + bob, 20, 18);
 
-  // head
   ctx.fillStyle = hero.skin;
   ctx.beginPath();
   ctx.arc(x, y - 16 + bob, 8, 0, Math.PI * 2);
