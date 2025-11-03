@@ -1,11 +1,11 @@
-// basic character creation -> world
+// character creation and game with localStorage for persistence
 
 const charScreen = document.getElementById("char-screen");
 const gameScreen = document.getElementById("game-screen");
 const startBtn = document.getElementById("start-btn");
 const heroNameInput = document.getElementById("hero-name");
-const heroColorInput = document.getElementById("hero-color");
 const heroClassSelect = document.getElementById("hero-class");
+const charGrid = document.getElementById("character-grid");
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
@@ -16,13 +16,48 @@ const hudPos = document.getElementById("hud-pos");
 const interactBox = document.getElementById("interact-box");
 
 let hero = null;
+let selectedCharId = null;
 
-// simple tile map (1 = wall, 0 = floor, 2 = NPC)
+// survivor / soldier themed characters
+const characterPresets = [
+  {
+    id: "scout-girl",
+    name: "Scout",
+    desc: "Quick survivor",
+    bodyColor: "#f97316",
+    trimColor: "#fde68a",
+    class: "scavenger"
+  },
+  {
+    id: "urban-soldier",
+    name: "Urban Soldier",
+    desc: "Armored infantry",
+    bodyColor: "#0ea5e9",
+    trimColor: "#e2e8f0",
+    class: "soldier"
+  },
+  {
+    id: "field-medic",
+    name: "Field Medic",
+    desc: "Heals the squad",
+    bodyColor: "#22c55e",
+    trimColor: "#fef9c3",
+    class: "medic"
+  },
+  {
+    id: "wasteland-hunter",
+    name: "Hunter",
+    desc: "Ranged survivor",
+    bodyColor: "#eab308",
+    trimColor: "#fef3c7",
+    class: "ranger"
+  }
+];
+
+// map settings
 const mapCols = 25;
 const mapRows = 15;
 const tileSize = 32;
-
-// a simple room with walls
 const mapData = [
   "1111111111111111111111111",
   "1000000000000000000020001",
@@ -52,15 +87,81 @@ const keys = {
   d: false,
 };
 
+// render character cards
+function renderCharacterCards() {
+  charGrid.innerHTML = "";
+  characterPresets.forEach((ch, idx) => {
+    const card = document.createElement("div");
+    card.className = "character-card" + (idx === 0 ? " selected" : "");
+    if (idx === 0) selectedCharId = ch.id;
+
+    const preview = document.createElement("div");
+    preview.className = "char-preview";
+    preview.style.background = ch.bodyColor;
+
+    const title = document.createElement("div");
+    title.textContent = ch.name;
+    title.style.fontWeight = "600";
+    title.style.fontSize = "0.75rem";
+
+    const meta = document.createElement("div");
+    meta.className = "char-meta";
+    meta.textContent = ch.desc;
+
+    card.appendChild(preview);
+    card.appendChild(title);
+    card.appendChild(meta);
+
+    card.addEventListener("click", () => {
+      selectedCharId = ch.id;
+      document.querySelectorAll(".character-card").forEach((el) => el.classList.remove("selected"));
+      card.classList.add("selected");
+
+      // auto adjust class dropdown to their class
+      heroClassSelect.value = ch.class;
+    });
+
+    charGrid.appendChild(card);
+  });
+}
+renderCharacterCards();
+
+// load from localStorage
+(function loadSavedHero() {
+  const saved = localStorage.getItem("miniAdventureHero");
+  if (saved) {
+    const data = JSON.parse(saved);
+    hero = {
+      ...data,
+      x: 64,
+      y: 64,
+      speed: 2.2,
+      width: 26,
+      height: 26,
+    };
+    selectedCharId = data.presetId || characterPresets[0].id;
+    hudName.textContent = hero.name;
+    hudClass.textContent = "Class: " + hero.class;
+    charScreen.classList.remove("active");
+    gameScreen.classList.add("active");
+    requestAnimationFrame(gameLoop);
+  } else {
+    // show character screen
+    charScreen.classList.add("active");
+  }
+})();
+
 startBtn.addEventListener("click", () => {
   const nm = heroNameInput.value.trim() || "Hero";
-  const col = heroColorInput.value;
   const cls = heroClassSelect.value;
+  const preset = characterPresets.find((c) => c.id === selectedCharId) || characterPresets[0];
 
   hero = {
     name: nm,
-    color: col,
     class: cls,
+    presetId: preset.id,
+    bodyColor: preset.bodyColor,
+    trimColor: preset.trimColor,
     x: 64,
     y: 64,
     speed: 2.2,
@@ -68,8 +169,20 @@ startBtn.addEventListener("click", () => {
     height: 26,
   };
 
-  hudName.textContent = nm;
-  hudClass.textContent = `Class: ${cls}`;
+  // save to localStorage
+  localStorage.setItem(
+    "miniAdventureHero",
+    JSON.stringify({
+      name: hero.name,
+      class: hero.class,
+      presetId: hero.presetId,
+      bodyColor: hero.bodyColor,
+      trimColor: hero.trimColor,
+    })
+  );
+
+  hudName.textContent = hero.name;
+  hudClass.textContent = "Class: " + hero.class;
 
   charScreen.classList.remove("active");
   gameScreen.classList.add("active");
@@ -179,7 +292,7 @@ function isNearNPC(x, y) {
 function tryInteract() {
   if (!hero) return;
   if (isNearNPC(hero.x, hero.y)) {
-    alert("NPC: Hey " + hero.name + "! Nice " + hero.class + " outfit!");
+    alert("NPC: Hey " + hero.name + "! Stay safe out there, " + hero.class + "!");
   }
 }
 
@@ -212,10 +325,20 @@ function draw() {
     }
   }
 
-  ctx.fillStyle = hero.color;
+  // draw hero using preset colors
+  ctx.fillStyle = hero.bodyColor || "#38bdf8";
   ctx.beginPath();
   ctx.arc(hero.x, hero.y, hero.width / 2, 0, Math.PI * 2);
   ctx.fill();
+
+  // simple trim ring
+  if (hero.trimColor) {
+    ctx.strokeStyle = hero.trimColor;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(hero.x, hero.y, hero.width / 2 + 1, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   ctx.fillStyle = "white";
   ctx.font = "12px system-ui";
