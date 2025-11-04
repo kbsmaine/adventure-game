@@ -1,4 +1,4 @@
-// game.js — full version with exit at (307, 102)
+// game.js — exit arrow, zombie collisions, per-character model, inventory, bullet-wall sparks
 
 // ===== DOM refs =====
 const charScreen = document.getElementById("char-screen");
@@ -44,13 +44,13 @@ let selectedCharId = null;
 let level = 1;
 let zombies = [];
 let bullets = [];
+let bulletImpacts = []; // sparks on impact
 let door = null;
 let gameOver = false;
-let pendingPickup = null;
+let worldPickups = []; // weapons + meds on ground
 
-// hardcoded spawn you wanted earlier
+// hardcoded spawn from earlier
 let savedSpawn = { x: 1123.3, y: 821.4 };
-// weapon spawn points you can add from pause menu
 let weaponSpawns = [];
 
 // ===== character presets =====
@@ -62,8 +62,8 @@ const survivorPresets = [
 ];
 
 const weapons = {
-  flashlight: { name: "Flashlight", canFire: false },
-  pistol: { name: "9mm Pistol", canFire: true, fireRate: 280, bulletSpeed: 7, damage: 1, spread: 0 }
+  flashlight: { id: "flashlight", name: "Flashlight", canFire: false },
+  pistol: { id: "pistol", name: "9mm Pistol", canFire: true, fireRate: 280, bulletSpeed: 7, damage: 1, spread: 0 }
 };
 
 // ===== input =====
@@ -140,7 +140,7 @@ makePauseBtn("Set spawn to here", () => {
 });
 makePauseBtn("Add weapon spawn here", () => {
   if (hero) {
-    weaponSpawns.push({ x: hero.x, y: hero.y });
+    weaponSpawns.push({ x: hero.x, y: hero.y, type: "weapon", weaponId: "pistol" });
     console.log("🔫 weapon spawn added", hero.x, hero.y);
   }
 });
@@ -161,7 +161,7 @@ makePauseBtn("Close", () => togglePause(false));
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  placeDoor(); // uses our hardcoded coords
+  placeDoor();
   buildCollisionMapFromImage();
 }
 window.addEventListener("resize", resizeCanvas);
@@ -193,16 +193,13 @@ function renderCharacterGrid() {
     role.className = "card-role";
     role.textContent = p.role;
 
-    card.appendChild(sw);
-    card.appendChild(title);
-    card.appendChild(role);
-
+    card.append(sw, title, role);
     card.addEventListener("click", () => {
       selectedCharId = p.id;
       document.querySelectorAll(".character-card").forEach(el => el.classList.remove("selected"));
+      card.addEventListener("click", () => {});
       card.classList.add("selected");
     });
-
     charGrid.appendChild(card);
   });
 }
@@ -210,7 +207,6 @@ renderCharacterGrid();
 
 // ===== start game =====
 startBtn.addEventListener("click", startGame);
-
 function startGame() {
   const nm = heroNameInput.value.trim() || "Survivor";
   const preset = survivorPresets.find(p => p.id === selectedCharId) || survivorPresets[0];
@@ -232,15 +228,17 @@ function startGame() {
     angle: 0,
     speed: 2.3,
     walkTime: 0,
-    currentWeapon: "flashlight",
     hp: 100,
-    maxHp: 100
+    maxHp: 100,
+    inventory: ["flashlight"],
+    activeSlot: 0,
+    meds: 0
   };
 
   level = 1;
   hudName.textContent = hero.name;
   hudClass.textContent = hero.class;
-  hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
+  hudItem.textContent = "Item: Flashlight";
   hudLevel.textContent = "Zone: " + level;
   hudHp.textContent = "HP: " + hero.hp;
 
@@ -290,6 +288,12 @@ window.addEventListener("keydown", e => {
       console.log(EDIT_COLLISIONS ? "🧱 collision editor ON (drag)" : "collision editor OFF");
     }
   }
+
+  // inventory keys
+  if (e.key === "1") selectSlot(0);
+  if (e.key === "2") selectSlot(1);
+  if (e.key === "3") selectSlot(2);
+  if (e.key === "4") useBandage();
 });
 
 window.addEventListener("keyup", e => {
@@ -343,10 +347,29 @@ canvas.addEventListener("contextmenu", e => {
   if (EDIT_COLLISIONS) e.preventDefault();
 });
 
+// ===== inventory helpers =====
+function selectSlot(n) {
+  if (!hero) return;
+  if (n < hero.inventory.length) {
+    hero.activeSlot = n;
+    const wid = hero.inventory[n];
+    hudItem.textContent = "Item: " + weapons[wid].name;
+  }
+}
+function useBandage() {
+  if (!hero) return;
+  if (hero.meds > 0) {
+    hero.meds--;
+    hero.hp = Math.min(hero.maxHp, hero.hp + 35);
+    hudHp.textContent = "HP: " + Math.ceil(hero.hp);
+    console.log("💊 used bandage, remaining:", hero.meds);
+  }
+}
+
 // ===== collisions (your big list) =====
 function buildCollisionMapFromImage() {
   const compiled = [];
-  // your recorded collisionRects:
+  // --- your logged rectangles (exactly as you gave) ---
   compiled.push({ x: 755, y: 431, w: 379, h: 111 });
   compiled.push({ x: 887, y: 213, w: 38, h: 23 });
   compiled.push({ x: 926, y: 211, w: 42, h: 13 });
@@ -490,7 +513,7 @@ function buildCollisionMapFromImage() {
   collisionRects = compiled;
 }
 
-// ===== door — moved to (307, 102) =====
+// ===== door — at (307, 102) and hidden until clear =====
 function placeDoor() {
   door = { x: 307, y: 102, active: false };
 }
@@ -498,6 +521,9 @@ function placeDoor() {
 // ===== game logic =====
 function spawnZombies() {
   zombies = [];
+  worldPickups = [];
+  bulletImpacts = [];
+
   const count = 5 + level * 2;
   for (let i = 0; i < count; i++) {
     zombies.push({
@@ -509,21 +535,29 @@ function spawnZombies() {
       dieTimer: 0
     });
   }
-  bullets = [];
 
-  if (hero && hero.currentWeapon === "flashlight") {
-    if (weaponSpawns.length > 0) {
-      pendingPickup = { x: weaponSpawns[0].x, y: weaponSpawns[0].y };
-    } else {
-      pendingPickup = { x: hero.x + 80, y: hero.y - 40 };
-    }
-  } else {
-    pendingPickup = null;
+  // weapon near player if only flashlight
+  if (hero && hero.inventory.length === 1 && hero.inventory[0] === "flashlight") {
+    worldPickups.push({
+      type: "weapon",
+      weaponId: "pistol",
+      x: hero.x + 80,
+      y: hero.y - 40
+    });
   }
+
+  // drop a bandage
+  worldPickups.push({
+    type: "med",
+    x: hero.x - 60,
+    y: hero.y - 40
+  });
 }
 
 function gameLoop(t) {
-  if (!isPaused && !gameOver) update(t);
+  if (!isPaused && !gameOver) {
+    update(t);
+  }
   draw();
   requestAnimationFrame(gameLoop);
 }
@@ -540,11 +574,18 @@ function update(t) {
 
   if (keys.mouseDown) tryFire(t);
 
-  // bullets
+  // bullets — now collide with walls
   bullets = bullets.filter(b => {
     b.x += Math.cos(b.angle) * b.speed;
     b.y += Math.sin(b.angle) * b.speed;
     b.life--;
+
+    // if bullet hits wall, spawn spark and remove
+    if (isBulletBlocked(b.x, b.y)) {
+      bulletImpacts.push({ x: b.x, y: b.y, life: 10 });
+      return false;
+    }
+
     return b.life > 0;
   });
 
@@ -562,14 +603,20 @@ function update(t) {
     });
   });
 
-  // zombies move
+  // zombies move with collision
   zombies.forEach(z => {
     if (z.dying) {
       z.dieTimer--;
     } else {
       const ang = Math.atan2(hero.y - z.y, hero.x - z.x);
-      z.x += Math.cos(ang) * z.speed;
-      z.y += Math.sin(ang) * z.speed;
+      const step = z.speed;
+      const nextX = z.x + Math.cos(ang) * step;
+      const nextY = z.y + Math.sin(ang) * step;
+      const blockedX = isBlockedPoint(nextX, z.y);
+      const blockedY = isBlockedPoint(z.x, nextY);
+      if (!blockedX) z.x = nextX;
+      if (!blockedY) z.y = nextY;
+
       if (!GHOST_MODE && Math.hypot(hero.x - z.x, hero.y - z.y) < 22) {
         hero.hp -= 0.35;
         if (hero.hp <= 0) {
@@ -583,14 +630,14 @@ function update(t) {
 
   zombies = zombies.filter(z => !z.dying || z.dieTimer > 0);
 
-  // open door when all zombies cleared
+  // open exit when all dead
   if (zombies.filter(z => !z.dying).length === 0) {
     door.active = true;
   }
 
-  // show interact prompt
-  const nearPickup = pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40;
-  const nearDoor = door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50;
+  // show prompt
+  const nearPickup = worldPickups.some(p => Math.hypot(hero.x - p.x, hero.y - p.y) < 40);
+  const nearDoor = door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 60;
   if (nearPickup || nearDoor) interactBox.classList.remove("hidden");
   else interactBox.classList.add("hidden");
 
@@ -607,6 +654,10 @@ function isBlockedPoint(px, py) {
     paintedColliders.some(r => pointInRect(px, py, r))
   );
 }
+function isBulletBlocked(px, py) {
+  return isBlockedPoint(px, py);
+}
+
 function moveHeroWithCollisions(dx, dy) {
   if (GHOST_MODE) {
     hero.x += dx;
@@ -632,10 +683,61 @@ function moveHeroWithCollisions(dx, dy) {
   if (!yBlocked) hero.y = newY;
 }
 
-// ===== interact / firing =====
+// ===== interact / inventory =====
+function tryInteract() {
+  // pickups
+  for (let i = 0; i < worldPickups.length; i++) {
+    const p = worldPickups[i];
+    if (Math.hypot(hero.x - p.x, hero.y - p.y) < 40) {
+      if (p.type === "weapon") {
+        pickUpWeapon(p.weaponId, p.x, p.y);
+      } else if (p.type === "med") {
+        hero.meds++;
+        console.log("💊 picked bandage, total:", hero.meds);
+      }
+      worldPickups.splice(i, 1);
+      return;
+    }
+  }
+  // door
+  if (door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 60) {
+    level++;
+    hudLevel.textContent = "Zone: " + level;
+    spawnZombies();
+    door.active = false;
+  }
+}
+
+function pickUpWeapon(weaponId, dropX, dropY) {
+  if (!hero) return;
+  const already = hero.inventory.indexOf(weaponId);
+  if (already !== -1) {
+    hero.activeSlot = already;
+    hudItem.textContent = "Item: " + weapons[weaponId].name;
+    return;
+  }
+  if (hero.inventory.length < 3) {
+    hero.inventory.push(weaponId);
+    hero.activeSlot = hero.inventory.length - 1;
+    hudItem.textContent = "Item: " + weapons[weaponId].name;
+  } else {
+    const currentId = hero.inventory[hero.activeSlot];
+    worldPickups.push({
+      type: "weapon",
+      weaponId: currentId,
+      x: dropX ?? hero.x + 20,
+      y: dropY ?? hero.y + 10
+    });
+    hero.inventory[hero.activeSlot] = weaponId;
+    hudItem.textContent = "Item: " + weapons[weaponId].name;
+  }
+}
+
+// ===== firing =====
 function tryFire(t) {
-  const weap = weapons[hero.currentWeapon];
-  if (!weap.canFire) return;
+  const wid = hero.inventory[hero.activeSlot];
+  const weap = weapons[wid];
+  if (!weap || !weap.canFire) return;
   const last = hero.lastFire || 0;
   if (t - last < weap.fireRate) return;
   hero.lastFire = t;
@@ -646,21 +748,6 @@ function tryFire(t) {
     speed: weap.bulletSpeed,
     life: 70
   });
-}
-
-function tryInteract() {
-  if (pendingPickup && Math.hypot(hero.x - pendingPickup.x, hero.y - pendingPickup.y) < 40) {
-    hero.currentWeapon = "pistol";
-    pendingPickup = null;
-    hudItem.textContent = "Item: " + weapons[hero.currentWeapon].name;
-    return;
-  }
-  if (door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 50) {
-    level++;
-    hudLevel.textContent = "Zone: " + level;
-    spawnZombies();
-    door.active = false;
-  }
 }
 
 // ===== drawing =====
@@ -675,15 +762,16 @@ function draw() {
   }
 
   if (DEBUG_COLLISIONS) drawCollisionDebug();
-  drawDoor();
+  drawDoorArrow();
   drawWeaponSpawns();
+  drawWorldPickups();
   drawZombies();
   drawBullets();
+  drawBulletImpacts();
   if (hero) {
     drawHero();
     drawWeaponLight();
   }
-  drawPickup();
   drawPaintedColliders();
 }
 
@@ -718,10 +806,28 @@ function drawPaintedColliders() {
   ctx.restore();
 }
 
-function drawDoor() {
+function drawDoorArrow() {
   if (!door) return;
-  ctx.fillStyle = door.active ? "rgba(34,197,94,0.9)" : "rgba(15,23,42,0.8)";
-  ctx.fillRect(door.x, door.y, 80, 60);
+  if (!door.active) return;
+  const cx = door.x + 40;
+  const cy = door.y + 30;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = "rgba(34,197,94,0.85)";
+  ctx.strokeStyle = "rgba(15,23,42,0.7)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -30);
+  ctx.lineTo(22, 10);
+  ctx.lineTo(10, 10);
+  ctx.lineTo(10, 26);
+  ctx.lineTo(-10, 26);
+  ctx.lineTo(-10, 10);
+  ctx.lineTo(-22, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawWeaponSpawns() {
@@ -736,6 +842,29 @@ function drawWeaponSpawns() {
     ctx.stroke();
   });
   ctx.restore();
+}
+
+function drawWorldPickups() {
+  worldPickups.forEach(p => {
+    if (p.type === "weapon") {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(-Math.PI / 8);
+      ctx.fillStyle = "#1f2937";
+      ctx.fillRect(-10, -4, 22, 8);
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillRect(-5, -1, 6, 10);
+      ctx.restore();
+    } else if (p.type === "med") {
+      ctx.save();
+      ctx.fillStyle = "#ef4444";
+      ctx.fillRect(p.x - 10, p.y - 6, 20, 12);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(p.x - 3, p.y - 6, 6, 12);
+      ctx.fillRect(p.x - 10, p.y - 2, 20, 4);
+      ctx.restore();
+    }
+  });
 }
 
 function drawZombies() {
@@ -771,6 +900,25 @@ function drawBullets() {
   });
 }
 
+function drawBulletImpacts() {
+  bulletImpacts = bulletImpacts.filter(s => {
+    ctx.save();
+    const alpha = s.life / 10;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "rgba(248,250,252,1)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(s.x - 4, s.y);
+    ctx.lineTo(s.x + 4, s.y);
+    ctx.moveTo(s.x, s.y - 4);
+    ctx.lineTo(s.x, s.y + 4);
+    ctx.stroke();
+    ctx.restore();
+    s.life--;
+    return s.life > 0;
+  });
+}
+
 function drawHero() {
   const x = hero.x;
   const y = hero.y;
@@ -785,17 +933,50 @@ function drawHero() {
   ctx.fillRect(x - 6, y + 4, 5, 14);
   ctx.fillRect(x + 1, y + 4, 5, 14);
 
-  ctx.fillStyle = hero.jacket;
-  ctx.fillRect(x - 10, y - 8 + bob, 20, 18);
+  ctx.save();
+  if (hero.presetId === "operator") {
+    ctx.fillStyle = hero.jacket;
+    ctx.fillRect(x - 11, y - 8 + bob, 22, 20);
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillRect(x - 8, y - 4 + bob, 16, 10);
+  } else if (hero.presetId === "scout") {
+    ctx.fillStyle = hero.jacket;
+    ctx.fillRect(x - 9, y - 8 + bob, 18, 18);
+    ctx.fillStyle = "rgba(56,189,248,0.3)";
+    ctx.fillRect(x - 7, y - 12 + bob, 14, 6);
+  } else if (hero.presetId === "medic") {
+    ctx.fillStyle = hero.jacket;
+    ctx.fillRect(x - 10, y - 8 + bob, 20, 18);
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(x - 4, y - 4 + bob, 8, 8);
+  } else {
+    ctx.fillStyle = hero.jacket;
+    ctx.fillRect(x - 10, y - 8 + bob, 20, 18);
+  }
+  ctx.restore();
 
   ctx.fillStyle = hero.skin;
   ctx.beginPath();
   ctx.arc(x, y - 16 + bob, 8, 0, Math.PI * 2);
   ctx.fill();
+
+  if (hero.presetId === "operator") {
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(x - 8, y - 22 + bob, 16, 6);
+  } else if (hero.presetId === "scout") {
+    ctx.strokeStyle = "#38bdf8";
+    ctx.beginPath();
+    ctx.arc(x, y - 16 + bob, 9, Math.PI * 0.1, Math.PI * 0.9);
+    ctx.stroke();
+  } else if (hero.presetId === "ranger") {
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(x - 10, y - 20 + bob, 20, 4);
+  }
 }
 
 function drawWeaponLight() {
-  if (hero.currentWeapon === "flashlight") {
+  const wid = hero.inventory[hero.activeSlot];
+  if (wid === "flashlight") {
     const handX = hero.x + Math.cos(hero.angle) * 14;
     const handY = hero.y + Math.sin(hero.angle) * 14;
     ctx.save();
@@ -829,12 +1010,4 @@ function drawWeaponLight() {
     ctx.stroke();
     ctx.restore();
   }
-}
-
-function drawPickup() {
-  if (!pendingPickup) return;
-  ctx.fillStyle = "#1f2937";
-  ctx.fillRect(pendingPickup.x - 14, pendingPickup.y - 8, 28, 16);
-  ctx.fillStyle = "#fb7185";
-  ctx.fillRect(pendingPickup.x - 4, pendingPickup.y - 3, 12, 6);
 }
