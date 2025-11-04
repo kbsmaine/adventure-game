@@ -1,4 +1,13 @@
-// game.js — exit arrow, zombie collisions, per-character model, inventory, bullet-wall sparks
+// game.js — full version
+// - spawn baked in at (696, 493)
+// - weapon spawn baked in at (1130.2, 809.9)
+// - exit arrow at (307, 102), hidden until all enemies dead
+// - inventory (1/2/3) + bandages (4)
+// - bullets collide with walls + spark
+// - collision editor (B)
+// - pause menu with editor access
+// - zombies slide along walls + now have cooler, varied models
+// - retry resets level so zombies don’t get harder each time
 
 // ===== DOM refs =====
 const charScreen = document.getElementById("char-screen");
@@ -44,14 +53,16 @@ let selectedCharId = null;
 let level = 1;
 let zombies = [];
 let bullets = [];
-let bulletImpacts = []; // sparks on impact
+let bulletImpacts = [];
 let door = null;
 let gameOver = false;
-let worldPickups = []; // weapons + meds on ground
+let worldPickups = [];
 
-// hardcoded spawn from earlier
-let savedSpawn = { x: 1123.3, y: 821.4 };
-let weaponSpawns = [];
+// ===== baked spawn + weapon spawns =====
+let savedSpawn = { x: 696, y: 493 };
+let weaponSpawns = [
+  { x: 1130.2, y: 809.9, type: "weapon", weaponId: "pistol" }
+];
 
 // ===== character presets =====
 const survivorPresets = [
@@ -197,9 +208,9 @@ function renderCharacterGrid() {
     card.addEventListener("click", () => {
       selectedCharId = p.id;
       document.querySelectorAll(".character-card").forEach(el => el.classList.remove("selected"));
-      card.addEventListener("click", () => {});
       card.classList.add("selected");
     });
+
     charGrid.appendChild(card);
   });
 }
@@ -251,9 +262,12 @@ function startGame() {
 }
 
 retryBtn.addEventListener("click", () => {
+  // important: reset level so zombies don't feel faster each time
+  level = 1;
   deathScreen.classList.add("hidden");
   gameOver = false;
   hero.hp = hero.maxHp;
+  placeDoor();
   spawnZombies();
   isPaused = false;
 });
@@ -289,7 +303,7 @@ window.addEventListener("keydown", e => {
     }
   }
 
-  // inventory keys
+  // inventory
   if (e.key === "1") selectSlot(0);
   if (e.key === "2") selectSlot(1);
   if (e.key === "3") selectSlot(2);
@@ -366,10 +380,10 @@ function useBandage() {
   }
 }
 
-// ===== collisions (your big list) =====
+// ===== collisions =====
 function buildCollisionMapFromImage() {
   const compiled = [];
-  // --- your logged rectangles (exactly as you gave) ---
+  // all the collision rects you logged
   compiled.push({ x: 755, y: 431, w: 379, h: 111 });
   compiled.push({ x: 887, y: 213, w: 38, h: 23 });
   compiled.push({ x: 926, y: 211, w: 42, h: 13 });
@@ -513,9 +527,44 @@ function buildCollisionMapFromImage() {
   collisionRects = compiled;
 }
 
-// ===== door — at (307, 102) and hidden until clear =====
+// ===== door =====
 function placeDoor() {
   door = { x: 307, y: 102, active: false };
+}
+
+// ===== enemy variant picker (for cooler peds) =====
+function pickPedVariant() {
+  const variants = [
+    {
+      name: "civilian",
+      head: "#fdbba3",
+      torso: "#374151",
+      accent: "#9ca3af",
+      pants: "#111827"
+    },
+    {
+      name: "raider",
+      head: "#fef3c7",
+      torso: "#991b1b",
+      accent: "#f97316",
+      pants: "#1f2937"
+    },
+    {
+      name: "hazmat",
+      head: "#fef9c3",
+      torso: "#facc15",
+      accent: "#0f172a",
+      pants: "#0f172a"
+    },
+    {
+      name: "infected",
+      head: "#fda4af",
+      torso: "#14532d",
+      accent: "#dc2626",
+      pants: "#052e16"
+    }
+  ];
+  return variants[Math.floor(Math.random() * variants.length)];
 }
 
 // ===== game logic =====
@@ -532,32 +581,33 @@ function spawnZombies() {
       hp: 1,
       speed: 0.35 + Math.random() * 0.2,
       dying: false,
-      dieTimer: 0
+      dieTimer: 0,
+      variant: pickPedVariant()
     });
   }
 
-  // weapon near player if only flashlight
-  if (hero && hero.inventory.length === 1 && hero.inventory[0] === "flashlight") {
+  // spawn baked weapon pickups
+  weaponSpawns.forEach(sp => {
     worldPickups.push({
       type: "weapon",
-      weaponId: "pistol",
-      x: hero.x + 80,
+      weaponId: sp.weaponId || "pistol",
+      x: sp.x,
+      y: sp.y
+    });
+  });
+
+  // drop a bandage
+  if (hero) {
+    worldPickups.push({
+      type: "med",
+      x: hero.x - 60,
       y: hero.y - 40
     });
   }
-
-  // drop a bandage
-  worldPickups.push({
-    type: "med",
-    x: hero.x - 60,
-    y: hero.y - 40
-  });
 }
 
 function gameLoop(t) {
-  if (!isPaused && !gameOver) {
-    update(t);
-  }
+  if (!isPaused && !gameOver) update(t);
   draw();
   requestAnimationFrame(gameLoop);
 }
@@ -574,13 +624,12 @@ function update(t) {
 
   if (keys.mouseDown) tryFire(t);
 
-  // bullets — now collide with walls
+  // bullets with wall hit + spark
   bullets = bullets.filter(b => {
     b.x += Math.cos(b.angle) * b.speed;
     b.y += Math.sin(b.angle) * b.speed;
     b.life--;
 
-    // if bullet hits wall, spawn spark and remove
     if (isBulletBlocked(b.x, b.y)) {
       bulletImpacts.push({ x: b.x, y: b.y, life: 10 });
       return false;
@@ -603,20 +652,33 @@ function update(t) {
     });
   });
 
-  // zombies move with collision
+  // zombies move, but slide instead of getting stuck
   zombies.forEach(z => {
     if (z.dying) {
       z.dieTimer--;
     } else {
       const ang = Math.atan2(hero.y - z.y, hero.x - z.x);
       const step = z.speed;
-      const nextX = z.x + Math.cos(ang) * step;
-      const nextY = z.y + Math.sin(ang) * step;
-      const blockedX = isBlockedPoint(nextX, z.y);
-      const blockedY = isBlockedPoint(z.x, nextY);
-      if (!blockedX) z.x = nextX;
-      if (!blockedY) z.y = nextY;
+      const tryX = z.x + Math.cos(ang) * step;
+      const tryY = z.y + Math.sin(ang) * step;
 
+      const blockX = isBlockedPoint(tryX, z.y);
+      const blockY = isBlockedPoint(z.x, tryY);
+
+      if (!blockX) z.x = tryX;
+      if (!blockY) z.y = tryY;
+
+      if (blockX && blockY) {
+        const altX = z.x + (Math.cos(ang) > 0 ? 1 : -1) * step;
+        if (!isBlockedPoint(altX, z.y)) {
+          z.x = altX;
+        } else {
+          const altY = z.y + (Math.sin(ang) > 0 ? 1 : -1) * step;
+          if (!isBlockedPoint(z.x, altY)) z.y = altY;
+        }
+      }
+
+      // contact damage
       if (!GHOST_MODE && Math.hypot(hero.x - z.x, hero.y - z.y) < 22) {
         hero.hp -= 0.35;
         if (hero.hp <= 0) {
@@ -630,12 +692,12 @@ function update(t) {
 
   zombies = zombies.filter(z => !z.dying || z.dieTimer > 0);
 
-  // open exit when all dead
+  // open door when all dead
   if (zombies.filter(z => !z.dying).length === 0) {
     door.active = true;
   }
 
-  // show prompt
+  // show interact
   const nearPickup = worldPickups.some(p => Math.hypot(hero.x - p.x, hero.y - p.y) < 40);
   const nearDoor = door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 60;
   if (nearPickup || nearDoor) interactBox.classList.remove("hidden");
@@ -644,7 +706,7 @@ function update(t) {
   hudHp.textContent = "HP: " + Math.ceil(hero.hp);
 }
 
-// ===== movement / collisions =====
+// ===== collision helpers =====
 function pointInRect(px, py, r) {
   return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
 }
@@ -657,7 +719,6 @@ function isBlockedPoint(px, py) {
 function isBulletBlocked(px, py) {
   return isBlockedPoint(px, py);
 }
-
 function moveHeroWithCollisions(dx, dy) {
   if (GHOST_MODE) {
     hero.x += dx;
@@ -703,8 +764,8 @@ function tryInteract() {
   if (door && door.active && Math.hypot(hero.x - (door.x + 40), hero.y - (door.y + 30)) < 60) {
     level++;
     hudLevel.textContent = "Zone: " + level;
+    placeDoor();
     spawnZombies();
-    door.active = false;
   }
 }
 
@@ -765,7 +826,7 @@ function draw() {
   drawDoorArrow();
   drawWeaponSpawns();
   drawWorldPickups();
-  drawZombies();
+  drawZombies(); // new cooler peds
   drawBullets();
   drawBulletImpacts();
   if (hero) {
@@ -875,17 +936,61 @@ function drawZombies() {
       ctx.globalAlpha = p;
       ctx.fillStyle = "#ef4444";
       ctx.beginPath();
-      ctx.arc(z.x, z.y - 8, 20 * p, 0, Math.PI * 2);
+      ctx.arc(z.x, z.y - 4, 20 * p, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
-    } else {
-      ctx.fillStyle = "#14532d";
-      ctx.fillRect(z.x - 12, z.y - 10, 24, 32);
-      ctx.fillStyle = "#166534";
-      ctx.beginPath();
-      ctx.arc(z.x, z.y - 16, 10, 0, Math.PI * 2);
-      ctx.fill();
+      return;
     }
+
+    const v = z.variant || {
+      head: "#fef3c7",
+      torso: "#14532d",
+      accent: "#dc2626",
+      pants: "#0f172a",
+      name: "infected"
+    };
+
+    // shadow
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.beginPath();
+    ctx.ellipse(z.x, z.y + 12, 16, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // legs
+    ctx.fillStyle = v.pants;
+    ctx.fillRect(z.x - 6, z.y + 2, 5, 14);
+    ctx.fillRect(z.x + 1, z.y + 2, 5, 14);
+
+    // torso
+    ctx.fillStyle = v.torso;
+    ctx.fillRect(z.x - 11, z.y - 10, 22, 20);
+
+    // accent
+    ctx.fillStyle = v.accent;
+    if (v.name === "infected") {
+      ctx.fillRect(z.x - 2, z.y - 10, 4, 16);
+    } else if (v.name === "raider") {
+      ctx.save();
+      ctx.translate(z.x, z.y);
+      ctx.rotate(-0.4);
+      ctx.fillRect(-2, -12, 4, 24);
+      ctx.restore();
+    } else {
+      ctx.fillRect(z.x - 4, z.y - 6, 8, 10);
+    }
+
+    // head
+    ctx.fillStyle = v.head;
+    ctx.beginPath();
+    ctx.arc(z.x, z.y - 16, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // eyes
+    ctx.fillStyle = "rgba(15,23,42,0.8)";
+    ctx.fillRect(z.x - 3, z.y - 18, 2, 2);
+    ctx.fillRect(z.x + 1, z.y - 18, 2, 2);
   });
 }
 
@@ -924,15 +1029,18 @@ function drawHero() {
   const y = hero.y;
   const bob = Math.sin(hero.walkTime) * 1.5;
 
+  // shadow
   ctx.fillStyle = "rgba(0,0,0,0.25)";
   ctx.beginPath();
   ctx.ellipse(x, y + 16, 16, 6, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // legs
   ctx.fillStyle = hero.pants;
   ctx.fillRect(x - 6, y + 4, 5, 14);
   ctx.fillRect(x + 1, y + 4, 5, 14);
 
+  // torso by preset
   ctx.save();
   if (hero.presetId === "operator") {
     ctx.fillStyle = hero.jacket;
@@ -955,11 +1063,13 @@ function drawHero() {
   }
   ctx.restore();
 
+  // head
   ctx.fillStyle = hero.skin;
   ctx.beginPath();
   ctx.arc(x, y - 16 + bob, 8, 0, Math.PI * 2);
   ctx.fill();
 
+  // gear overlays
   if (hero.presetId === "operator") {
     ctx.fillStyle = "#0f172a";
     ctx.fillRect(x - 8, y - 22 + bob, 16, 6);
